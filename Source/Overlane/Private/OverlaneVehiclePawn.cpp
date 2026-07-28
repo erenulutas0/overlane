@@ -224,6 +224,16 @@ AOverlaneVehiclePawn::AOverlaneVehiclePawn()
     CameraBoom->SetRelativeRotation(FRotator(-12.0f, 0.0f, 0.0f));
     CameraBoom->bDoCollisionTest = true;
 
+    // The camera was rigidly welded to the collision box: nothing trailed,
+    // nothing overshot, nothing settled, so a lane change made the whole world
+    // snap sideways as one block -- the perceptual signature of moving a diorama
+    // rather than driving a car.
+    CameraBoom->bEnableCameraLag = true;
+    CameraBoom->CameraLagSpeed = 10.0f;
+    CameraBoom->bEnableCameraRotationLag = true;
+    CameraBoom->CameraRotationLagSpeed = 8.0f;
+    CameraBoom->CameraLagMaxDistance = 150.0f;
+
     ChaseCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("ChaseCamera"));
     ChaseCamera->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
     ChaseCamera->bUsePawnControlRotation = false;
@@ -283,11 +293,69 @@ void AOverlaneVehiclePawn::Tick(float DeltaSeconds)
     }
 
     const float SpeedRatio = FMath::Clamp(GetSpeedKph() / 245.0f, 0.0f, 1.0f);
-    const float TurboCameraKick = IsBoostActive() ? 7.0f : 0.0f;
+    const float ForwardSpeed = ArcadeHandling->GetForwardSpeed();
+    const float LongitudinalAccel = (ForwardSpeed - PreviousForwardSpeed) / FMath::Max(DeltaSeconds, KINDA_SMALL_NUMBER);
+    PreviousForwardSpeed = ForwardSpeed;
+
+    UpdateCosmeticMotion(DeltaSeconds, SpeedRatio, LongitudinalAccel);
+
+    const float TurboCameraKick = IsBoostActive() ? 8.0f : 0.0f;
     const float TargetDistance = FMath::Lerp(BaseCameraDistance, MaxCameraDistance + (IsBoostActive() ? 135.0f : 0.0f), SpeedRatio);
-    const float TargetFov = FMath::Lerp(BaseCameraFov + CameraFovOffset, MaxCameraFov + CameraFovOffset + TurboCameraKick, SpeedRatio);
+
+    // A sense of speed comes from CHANGE, not from an absolute value, so
+    // acceleration feeds the FOV directly: the throttle now visibly punches it
+    // out and lifting pulls it back.
+    const float AccelTerm = FMath::Clamp(LongitudinalAccel / 2800.0f, -1.0f, 1.0f) * 4.0f;
+    const float TargetFov = FMath::Lerp(BaseCameraFov + CameraFovOffset, MaxCameraFov + CameraFovOffset + TurboCameraKick, SpeedRatio) + AccelTerm;
+
+    // Asymmetric on purpose. A single response rate made the boost kick arrive
+    // mushy; punching out fast and easing back slowly IS the feel.
+    const float FovRate = TargetFov > ChaseCamera->FieldOfView ? 12.0f : 3.0f;
+
     CameraBoom->TargetArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, TargetDistance, DeltaSeconds, CameraResponseSpeed);
-    ChaseCamera->SetFieldOfView(FMath::FInterpTo(ChaseCamera->FieldOfView, TargetFov, DeltaSeconds, CameraResponseSpeed));
+    ChaseCamera->SetFieldOfView(FMath::FInterpTo(ChaseCamera->FieldOfView, TargetFov, DeltaSeconds, FovRate));
+}
+
+void AOverlaneVehiclePawn::UpdateCosmeticMotion(float DeltaSeconds, float SpeedRatio, float LongitudinalAccel)
+{
+    // Wheels were set once in the constructor and never touched again. At
+    // 245 km/h a 34 cm wheel should turn about 32 times a second; frozen wheels
+    // on a moving car are the single most cartoonish tell in the frame, and a
+    // viewer registers it in under a second.
+    if (FrontLeftWheel && FrontLeftWheel->GetStaticMesh())
+    {
+        const float WheelRadius = FMath::Max(
+            FrontLeftWheel->GetStaticMesh()->GetBounds().BoxExtent.Z * FrontLeftWheel->GetRelativeScale3D().Z,
+            1.0f);
+        const float SpinDelta = (ArcadeHandling->GetForwardSpeed() * DeltaSeconds) / (2.0f * PI * WheelRadius) * 360.0f;
+        WheelSpinDegrees = FMath::Fmod(WheelSpinDegrees + SpinDelta, 360.0f);
+
+        const float SteerAngle = ArcadeHandling->GetSteeringInput() * 14.0f;
+        FrontLeftWheel->SetRelativeRotation(FRotator(WheelSpinDegrees, SteerAngle, 0.0f));
+        FrontRightWheel->SetRelativeRotation(FRotator(WheelSpinDegrees, SteerAngle, 0.0f));
+        RearLeftWheel->SetRelativeRotation(FRotator(WheelSpinDegrees, 0.0f, 0.0f));
+        RearRightWheel->SetRelativeRotation(FRotator(WheelSpinDegrees, 0.0f, 0.0f));
+    }
+
+    // Body attitude. The simulation has no lateral velocity and cannot dive,
+    // squat or lean, so every control input produced zero visible body response
+    // -- the largest control-feedback gap in the build. This is applied to the
+    // MESH only: rolling the collision root would change the box orientation and
+    // break the tested near-miss and collision behaviour.
+    const float TargetRoll = -ArcadeHandling->GetSteeringInput() * SpeedRatio * 3.5f;
+    const float TargetPitch = FMath::Clamp(-LongitudinalAccel / 2800.0f, -1.0f, 1.0f) * 2.2f;
+    CosmeticRoll = FMath::FInterpTo(CosmeticRoll, TargetRoll, DeltaSeconds, 6.0f);
+    CosmeticPitch = FMath::FInterpTo(CosmeticPitch, TargetPitch, DeltaSeconds, 8.0f);
+
+    const FRotator CosmeticRotation(CosmeticPitch, 0.0f, CosmeticRoll);
+    if (VehicleMesh)
+    {
+        VehicleMesh->SetRelativeRotation(CosmeticRotation);
+    }
+    if (CabinMesh)
+    {
+        CabinMesh->SetRelativeRotation(CosmeticRotation);
+    }
 }
 
 float AOverlaneVehiclePawn::GetSpeedKph() const

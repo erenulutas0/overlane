@@ -33,6 +33,9 @@ public:
      */
     float GetForwardSpeed() const { return CurrentSpeed; }
 
+    /** Cosmetic only: wheel steer angle and body roll are driven from this. */
+    float GetSteeringInput() const { return SteeringInput; }
+
     /** Scales top speed and acceleration. The AI rival's difficulty lever. */
     void SetPerformanceScale(float InScale);
 

@@ -505,3 +505,49 @@ Both paths now tint the mesh's **authored** materials instead of replacing them:
   component, so a pooled car changing variant cannot nest instances inside each other.
 
 `OverlaneEditor Win64 Development` compiles clean.
+
+# 2026-07-29 - Rendering settings and the motion pass
+
+## The renderer was switched off
+
+`Config/DefaultEngine.ini` had no `[/Script/Engine.RendererSettings]` section at all - it
+went from `GameMapsSettings` straight to `OnlineSubsystem`. Because those config values
+zero-initialise, that absence meant Lumen global illumination, reflections and virtual
+shadow maps were not turned down but **off**. Every GI, reflection, shadow and
+anti-aliasing choice in the game was whatever `BaseEngine.ini` happened to default to.
+The "plastic toy" look was the faithful, correct output of an engine with its rendering
+features disabled.
+
+The section now enables Lumen GI, screen-space reflections (deliberately not Lumen
+Reflections - a road seen from a chase camera is SSR's best case and it saves 1.5-2 ms),
+virtual shadow maps, mesh distance fields, TSR and local exposure.
+
+**Enabling mesh distance fields triggers a full derived-data rebuild of every static
+mesh - expect 10-30 minutes of unresponsive editor on first open.**
+
+## The motion pass
+
+Nothing on screen moved except position, which is why 245 km/h read like 80.
+
+- **Wheels now turn.** They were set once in the constructor and never touched again. At
+  245 km/h a 34 cm wheel should turn ~32 times a second. Front wheels also steer.
+- **Cosmetic body attitude.** The car could not dive, squat or lean, so every control
+  input produced zero visible body response - the largest control-feedback gap in the
+  build. Roll follows steering scaled by speed, pitch follows longitudinal acceleration.
+  Applied to the mesh only, never to the collision root and never to
+  `FOverlaneVehicleSimState`: rolling the root would change the box orientation and break
+  the tested near-miss and traffic-collision behaviour.
+- **Camera lag.** The boom was rigidly welded to the collision box, so a lane change made
+  the world snap sideways as one block. Now it trails, overshoots and settles.
+- **The camera curve is now asymmetric and acceleration-aware.** A sense of speed comes
+  from change, not from an absolute value, so acceleration feeds FOV directly and the
+  throttle visibly punches it out. FOV expands at rate 12 and returns at 3, instead of 4
+  in both directions, which made the boost kick arrive mushy.
+- `MaxCameraDistance` 1050 to 820: pulling the arm back at speed shrank the car and
+  reduced apparent road motion, which is the toy-car-on-a-track look. FOV does that job.
+- `MaxCameraFov` 104 to 100, with the boost kick raised to +8 so the extreme is reserved
+  for boost rather than being the cruising state.
+
+The full free-only art plan is saved as `ART_PLAN.md`.
+
+`OverlaneEditor Win64 Development` compiles clean.

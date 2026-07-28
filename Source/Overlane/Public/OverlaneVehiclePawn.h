@@ -91,6 +91,9 @@ protected:
     UFUNCTION()
     void OnRep_ServerMoveAck();
 
+    /** Wheel spin, body roll and dive. Mesh-only, never simulation state. */
+    void UpdateCosmeticMotion(float DeltaSeconds, float SpeedRatio, float LongitudinalAccel);
+
 private:
     UPROPERTY(VisibleAnywhere, Category = "Vehicle")
     TObjectPtr<UBoxComponent> VehicleCollision;
@@ -146,20 +149,34 @@ private:
     UPROPERTY(EditAnywhere, Category = "Camera", meta = (ClampMin = "0.0"))
     float BaseCameraDistance = 750.0f;
 
+    /**
+     * Pulling the arm far back at speed shrinks the car and reduces apparent
+     * road motion -- the classic toy-car-on-a-track look. FOV does that job now.
+     */
     UPROPERTY(EditAnywhere, Category = "Camera", meta = (ClampMin = "0.0"))
-    float MaxCameraDistance = 1050.0f;
+    float MaxCameraDistance = 820.0f;
 
     UPROPERTY(EditAnywhere, Category = "Camera", meta = (ClampMin = "1.0"))
     float BaseCameraFov = 90.0f;
 
+    /** 104 carried heavy edge distortion; the extreme is reserved for boost. */
     UPROPERTY(EditAnywhere, Category = "Camera", meta = (ClampMin = "1.0"))
-    float MaxCameraFov = 104.0f;
+    float MaxCameraFov = 100.0f;
 
     UPROPERTY(EditAnywhere, Category = "Camera", meta = (ClampMin = "0.1"))
     float CameraResponseSpeed = 4.0f;
 
     UPROPERTY(EditAnywhere, Category = "Feedback", meta = (ClampMin = "0.0"))
     float TrafficImpactFeedbackDuration = 0.8f;
+
+    // Cosmetic-only motion state. Deliberately NOT in FOverlaneVehicleSimState
+    // and never applied to VehicleCollision: rolling the collision root would
+    // change the box orientation and break the tested near-miss and traffic
+    // collision behaviour. These live on the mesh and replicate to nobody.
+    float WheelSpinDegrees = 0.0f;
+    float CosmeticRoll = 0.0f;
+    float CosmeticPitch = 0.0f;
+    float PreviousForwardSpeed = 0.0f;
 
     float TrafficImpactFeedbackRemaining = 0.0f;
     FLinearColor TrafficImpactFeedbackColor = FLinearColor(1.0f, 0.25f, 0.12f);
