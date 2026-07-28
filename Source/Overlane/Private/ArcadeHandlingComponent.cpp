@@ -1,7 +1,9 @@
 #include "ArcadeHandlingComponent.h"
 
+#include "Engine/World.h"
 #include "GameFramework/Pawn.h"
 #include "OverlaneGameModeBase.h"
+#include "OverlaneRaceGameState.h"
 
 UArcadeHandlingComponent::UArcadeHandlingComponent()
 {
@@ -58,8 +60,27 @@ float UArcadeHandlingComponent::GetSpeedRatio() const
 
 bool UArcadeHandlingComponent::IsDrivingAllowedHere() const
 {
-    const AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr;
-    return !GameMode || GameMode->IsDrivingAllowed();
+    const UWorld* World = GetWorld();
+    if (!World)
+    {
+        return true;
+    }
+
+    if (const AOverlaneGameModeBase* GameMode = World->GetAuthGameMode<AOverlaneGameModeBase>())
+    {
+        return GameMode->IsDrivingAllowed();
+    }
+
+    // GetAuthGameMode is null on a client, so the gate above was silently a no-op
+    // there and only the authority check below it hid the fact. Once the client
+    // simulates its own vehicle that becomes a real bug, so fall back to the
+    // replicated race state, which every machine can see.
+    if (const AOverlaneRaceGameState* RaceState = World->GetGameState<AOverlaneRaceGameState>())
+    {
+        return RaceState->IsRaceActive() && !RaceState->IsRacePaused();
+    }
+
+    return true;
 }
 
 bool UArcadeHandlingComponent::ShouldSimulateHere() const
@@ -107,8 +128,11 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
     if (!IsDrivingAllowedHere())
     {
         bBoostActive = false;
-        // Do not bank paused time, or the race resumes with a burst of catch-up steps.
+        // Do not bank paused time, or the race resumes with a burst of catch-up
+        // steps. Same for queued input: a client that keeps sending through a
+        // pause must not be able to cash the backlog in the moment it lifts.
         StepAccumulator = 0.0f;
+        PendingCommands.Reset();
         return;
     }
 
@@ -123,11 +147,11 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
     int32 Steps = 0;
     while (StepAccumulator >= OverlaneFixedDeltaSeconds && Steps < OverlaneMaxStepsPerFrame)
     {
-        // Until the network layer owns the command stream, every step samples the
-        // currently cached input. Behaviour is identical to reading the scalars
-        // directly, but it is already expressed as the command the wire will carry.
-        const FOverlaneInputCommand Command = FOverlaneInputCommand::Make(
-            LocalCommandSequence++, ThrottleInput, BrakeInput, SteeringInput, bBoostRequested);
+        FOverlaneInputCommand Command;
+        if (!ConsumeNextCommand(Command))
+        {
+            break;
+        }
 
         SimulateStep(Command, OverlaneFixedDeltaSeconds, EOverlaneStepMode::Live);
 
@@ -140,6 +164,68 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
         // Drop the backlog rather than spiral: catching up is worse than a hitch.
         StepAccumulator = 0.0f;
     }
+
+    // A latency spike leaves a deep jitter queue. Run a couple of extra steps
+    // beyond real time so we do not stay permanently behind the client's input.
+    // These are in order, after the normal steps, so causality is preserved.
+    int32 CatchUpSteps = 0;
+    while (PendingCommands.Num() > 8 && CatchUpSteps < 2)
+    {
+        FOverlaneInputCommand CatchUpCommand;
+        if (!ConsumeNextCommand(CatchUpCommand))
+        {
+            break;
+        }
+
+        SimulateStep(CatchUpCommand, OverlaneFixedDeltaSeconds, EOverlaneStepMode::Live);
+        ++CatchUpSteps;
+    }
+}
+
+void UArcadeHandlingComponent::EnqueueCommand(const FOverlaneInputCommand& Command)
+{
+    bCommandDriven = true;
+
+    // Bound the queue: a client that floods or reconnects must not be able to
+    // bank an arbitrary amount of future input.
+    if (PendingCommands.Num() >= OverlaneMoveRingSize)
+    {
+        PendingCommands.RemoveAt(0, PendingCommands.Num() - OverlaneMoveRingSize + 1, EAllowShrinking::No);
+    }
+
+    PendingCommands.Add(Command);
+}
+
+void UArcadeHandlingComponent::ClearPendingCommands()
+{
+    PendingCommands.Reset();
+}
+
+bool UArcadeHandlingComponent::ConsumeNextCommand(FOverlaneInputCommand& OutCommand)
+{
+    if (PendingCommands.Num() > 0)
+    {
+        OutCommand = PendingCommands[0];
+        PendingCommands.RemoveAt(0, 1, EAllowShrinking::No);
+        LastConsumedCommand = OutCommand;
+        LastConsumedSequence = OutCommand.Sequence;
+        bInputStarved = false;
+        return true;
+    }
+
+    if (bCommandDriven)
+    {
+        // The client has gone quiet. Repeat its last known intent rather than
+        // inventing one; the starvation flag lets the ack tell it so.
+        OutCommand = LastConsumedCommand;
+        bInputStarved = true;
+        return true;
+    }
+
+    // Locally driven: standalone, or the listen-server host's own pawn.
+    OutCommand = FOverlaneInputCommand::Make(
+        LocalCommandSequence++, ThrottleInput, BrakeInput, SteeringInput, bBoostRequested);
+    return true;
 }
 
 void UArcadeHandlingComponent::SimulateStep(const FOverlaneInputCommand& Command, float FixedDt, EOverlaneStepMode Mode)

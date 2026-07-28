@@ -316,3 +316,41 @@ P5-005 is closed. Remaining rival work is polish, tracked as BOT-005 (difficulty
 read once at spawn, so pause-menu changes apply next race) and SAVE-001 (the
 persistent best time is a legacy record from the retired 300 m route and is
 unbeatable on the current 6 km one).
+
+# 2026-07-28 - Netcode N-001 and N-002: pause gate and input batches
+
+## N-001 - the pause gate was a no-op on clients
+
+`UArcadeHandlingComponent` gated driving on `GetAuthGameMode`, which is null on a
+client, so the check silently did nothing there. Only the authority test two lines
+below hid it. It now falls back to `AOverlaneRaceGameState::IsRaceActive/IsRacePaused`,
+which every machine can see - required before the client simulates its own vehicle.
+
+## N-002 - sequenced, redundant input batches
+
+The old path sent one `Unreliable` RPC per input event, with no resend, no timeout and
+no heartbeat. Releasing the throttle produced exactly one packet, so **losing it left
+the server holding the throttle down forever.** `ETriggerEvent::Triggered` also fired
+every frame on every axis, producing roughly 432 RPCs per second.
+
+- The `Handle*` functions now only update the input cache.
+- The owning client samples that cache once per fixed step into a command with a
+  sequence number, and sends `ServerSendMoveBatch` at 30 Hz carrying every command it
+  has not seen acknowledged, capped at 12 - 200 ms of redundancy, so a dropped packet
+  is recovered by the next one without paying for reliable delivery.
+- The server merges batches into a per-pawn jitter queue keyed on sequence, ignores
+  anything already consumed (compared as a signed delta so the wrap at 65535 does not
+  stall the stream), and resynchronises rather than banking input that is implausibly
+  far ahead.
+- The handling component consumes exactly one command per fixed step. If the queue
+  runs dry it repeats the client's last known intent and flags starvation, instead of
+  inheriting whatever scalars happened to be cached locally. Two catch-up steps per
+  frame drain a deep queue after a latency spike, in order.
+- Queued input is discarded while driving is not allowed, so a client that keeps
+  sending through a pause cannot cash the backlog the moment it lifts.
+
+Standalone and the listen-server host driving their own car bypass the queue entirely
+and sample the cache directly, so single-player is unchanged.
+
+`OverlaneEditor Win64 Development` compiles clean. N-002 needs the two-client packet
+loss test before it can be called done.

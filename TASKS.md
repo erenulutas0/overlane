@@ -81,8 +81,8 @@ a replicated lane speed. Full plan and rationale in `DECISIONS.md`.
 | ID | Status | Task | Depends on | Acceptance criteria |
 |---|---|---|---|---|
 | N-000 | done | Fixed timestep and pure step function | — | `UArcadeHandlingComponent` split into an accumulator and `SimulateStep(Command, FixedDt, Mode)`; `FOverlaneVehicleSimState` get/set; collision cut gains a 0.12 s cooldown and a wrapping event counter. A scrape must cost exactly one speed cut at both 60 and 144 fps. |
-| N-001 | pending | Pause-gate migration and CVars | N-000 | The driving gate falls back to `AOverlaneRaceGameState` when `GetAuthGameMode` is null, so it is not silently a no-op on clients. Host pauses mid-race and both windows stop. |
-| N-002 | pending | Sequenced, redundant input batches | N-000 | `ServerSendMoveBatch` at 30 Hz carrying every unacked command. With `NetEmulation.PktLoss 20`, holding then releasing throttle must coast to a stop and never run away. |
+| N-001 | done | Pause-gate migration and CVars | N-000 | The driving gate falls back to `AOverlaneRaceGameState` when `GetAuthGameMode` is null, so it is not silently a no-op on clients. Host pauses mid-race and both windows stop. |
+| N-002 | in verification | Sequenced, redundant input batches | N-000 | `ServerSendMoveBatch` at 30 Hz carrying every unacked command. With `NetEmulation.PktLoss 20`, holding then releasing throttle must coast to a stop and never run away. |
 | N-003 | pending | Traffic lane speed and client extrapolation | N-000 | `ReplicatedLaneSpeed` on traffic plus capped client-side kinematic extrapolation; client traffic position error under ~15 cm at 150 ms RTT. |
 | N-004 | pending | Wire-format swap, behaviour neutral | N-002 | `FOverlaneMoveAck` replaces `OwnerServerTransform`; no behaviour change, so a replication break is diagnosable in isolation. |
 | N-005 | pending | Correction debug overlay / server ghost | N-004 | `overlane.Net.DrawCorrection` draws the server pose and the error magnitude. Ships before any enforcement. |

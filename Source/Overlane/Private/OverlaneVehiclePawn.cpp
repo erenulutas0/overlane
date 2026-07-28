@@ -298,6 +298,16 @@ float AOverlaneVehiclePawn::GetForwardSpeedCms() const
     return ArcadeHandling->GetForwardSpeed();
 }
 
+void AOverlaneVehiclePawn::EnqueueInputCommand(const FOverlaneInputCommand& Command)
+{
+    ArcadeHandling->EnqueueCommand(Command);
+}
+
+void AOverlaneVehiclePawn::ClearPendingInputCommands()
+{
+    ArcadeHandling->ClearPendingCommands();
+}
+
 void AOverlaneVehiclePawn::SetPerformanceScale(float InScale)
 {
     ArcadeHandling->SetPerformanceScale(InScale);

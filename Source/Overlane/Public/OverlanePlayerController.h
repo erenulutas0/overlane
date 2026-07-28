@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "OverlaneNetTypes.h"
 #include "OverlanePlayerController.generated.h"
 
 class UInputAction;
@@ -19,13 +20,23 @@ public:
 protected:
     virtual void BeginPlay() override;
     virtual void SetupInputComponent() override;
+    virtual void Tick(float DeltaSeconds) override;
 
-    UFUNCTION(Server, Unreliable)
-    void ServerSetVehicleInput(float Throttle, float Brake, float Steering, bool bBoost);
+    /**
+     * Carries EVERY command the client has not seen acknowledged, capped at 12.
+     *
+     * The old design sent one unreliable RPC per input event with no resend and
+     * no heartbeat, so a single dropped packet on throttle release left the
+     * server holding the throttle down forever. Redundancy fixes that without
+     * paying for reliable delivery, which would head-of-line block.
+     */
+    UFUNCTION(Server, Unreliable, WithValidation)
+    void ServerSendMoveBatch(const FOverlaneMoveBatch& Batch);
 
 private:
-    void SubmitVehicleInput();
     void ApplyVehicleInput(float Throttle, float Brake, float Steering, bool bBoost);
+    void TickLocalCommandStream(float DeltaSeconds);
+    void SendMoveBatch();
     void HandleThrottle(const FInputActionValue& Value);
     void HandleBrake(const FInputActionValue& Value);
     void HandleSteering(const FInputActionValue& Value);
@@ -45,6 +56,15 @@ private:
     float CachedBrakeInput = 0.0f;
     float CachedSteeringInput = 0.0f;
     bool bCachedBoostInput = false;
+
+    /** Commands generated but not yet known to have reached the server. */
+    TArray<FOverlaneInputCommand> UnackedCommands;
+    float CommandAccumulator = 0.0f;
+    float SendAccumulator = 0.0f;
+    uint16 NextCommandSequence = 1;
+
+    /** Server side: the highest sequence accepted from this client so far. */
+    uint16 LastAcceptedSequence = 0;
 
     UPROPERTY(Transient)
     TObjectPtr<UInputMappingContext> DrivingMappingContext;

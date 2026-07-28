@@ -12,6 +12,10 @@
 
 AOverlanePlayerController::AOverlanePlayerController()
 {
+    // The command stream is sampled on a fixed cadence in Tick, so ticking is no
+    // longer optional: without it a client would never send input at all.
+    PrimaryActorTick.bCanEverTick = true;
+
     DrivingMappingContext = CreateDefaultSubobject<UInputMappingContext>(TEXT("DrivingMappingContext"));
 
     ThrottleAction = CreateDefaultSubobject<UInputAction>(TEXT("ThrottleAction"));
@@ -148,43 +152,130 @@ void AOverlanePlayerController::SetupInputComponent()
 
 void AOverlanePlayerController::HandleThrottle(const FInputActionValue& Value)
 {
+    // The Handle* functions only ever update the cache now. Sampling happens once
+    // per fixed step in Tick, which throttles what used to be a ~432 RPC/s flood
+    // from ETriggerEvent::Triggered firing every frame on every axis.
     CachedThrottleInput = FMath::Clamp(Value.Get<float>(), 0.0f, 1.0f);
-    SubmitVehicleInput();
 }
 
 void AOverlanePlayerController::HandleBrake(const FInputActionValue& Value)
 {
     CachedBrakeInput = FMath::Clamp(Value.Get<float>(), 0.0f, 1.0f);
-    SubmitVehicleInput();
 }
 
 void AOverlanePlayerController::HandleSteering(const FInputActionValue& Value)
 {
     CachedSteeringInput = FMath::Clamp(Value.Get<float>(), -1.0f, 1.0f);
-    SubmitVehicleInput();
 }
 
 void AOverlanePlayerController::HandleBoost(const FInputActionValue& Value)
 {
     bCachedBoostInput = Value.Get<bool>();
-    SubmitVehicleInput();
 }
 
-void AOverlanePlayerController::SubmitVehicleInput()
+void AOverlanePlayerController::Tick(float DeltaSeconds)
 {
+    Super::Tick(DeltaSeconds);
+
+    if (!IsLocalController())
+    {
+        return;
+    }
+
     if (HasAuthority())
     {
+        // Standalone, or the listen-server host driving its own car: the pawn's
+        // handling component samples the cache directly, so there is no command
+        // stream to build and nothing to send.
         ApplyVehicleInput(CachedThrottleInput, CachedBrakeInput, CachedSteeringInput, bCachedBoostInput);
+        return;
     }
-    else
+
+    TickLocalCommandStream(DeltaSeconds);
+}
+
+void AOverlanePlayerController::TickLocalCommandStream(float DeltaSeconds)
+{
+    CommandAccumulator += FMath::Min(DeltaSeconds, 0.25f);
+
+    int32 Generated = 0;
+    while (CommandAccumulator >= OverlaneFixedDeltaSeconds && Generated < OverlaneMaxStepsPerFrame)
     {
-        ServerSetVehicleInput(CachedThrottleInput, CachedBrakeInput, CachedSteeringInput, bCachedBoostInput);
+        UnackedCommands.Add(FOverlaneInputCommand::Make(
+            NextCommandSequence++, CachedThrottleInput, CachedBrakeInput, CachedSteeringInput, bCachedBoostInput));
+
+        CommandAccumulator -= OverlaneFixedDeltaSeconds;
+        ++Generated;
+    }
+
+    if (Generated >= OverlaneMaxStepsPerFrame)
+    {
+        CommandAccumulator = 0.0f;
+    }
+
+    // Until reconciliation lands there is no ack channel, so the window is simply
+    // capped: the newest 12 commands are 200 ms of redundancy, which is what a
+    // dropped packet needs to be recoverable.
+    if (UnackedCommands.Num() > OverlaneMaxBatchCommands)
+    {
+        UnackedCommands.RemoveAt(0, UnackedCommands.Num() - OverlaneMaxBatchCommands, EAllowShrinking::No);
+    }
+
+    SendAccumulator += DeltaSeconds;
+    if (SendAccumulator >= (1.0f / 30.0f))
+    {
+        SendAccumulator = 0.0f;
+        SendMoveBatch();
     }
 }
 
-void AOverlanePlayerController::ServerSetVehicleInput_Implementation(float Throttle, float Brake, float Steering, bool bBoost)
+void AOverlanePlayerController::SendMoveBatch()
 {
-    ApplyVehicleInput(Throttle, Brake, Steering, bBoost);
+    if (UnackedCommands.Num() == 0)
+    {
+        return;
+    }
+
+    FOverlaneMoveBatch Batch;
+    Batch.BaseSequence = UnackedCommands[0].Sequence;
+    Batch.Commands = UnackedCommands;
+    ServerSendMoveBatch(Batch);
+}
+
+bool AOverlanePlayerController::ServerSendMoveBatch_Validate(const FOverlaneMoveBatch& Batch)
+{
+    return Batch.Commands.Num() > 0 && Batch.Commands.Num() <= OverlaneMaxBatchCommands;
+}
+
+void AOverlanePlayerController::ServerSendMoveBatch_Implementation(const FOverlaneMoveBatch& Batch)
+{
+    AOverlaneVehiclePawn* VehiclePawn = Cast<AOverlaneVehiclePawn>(GetPawn());
+    if (!VehiclePawn)
+    {
+        return;
+    }
+
+    for (const FOverlaneInputCommand& Command : Batch.Commands)
+    {
+        // Sequence numbers wrap, so compare as a signed difference rather than
+        // with <, or the stream would stall for good after 65535 commands.
+        const int16 Delta = static_cast<int16>(Command.Sequence - LastAcceptedSequence);
+        if (Delta <= 0)
+        {
+            continue;   // already have it: this is the redundancy doing its job
+        }
+
+        if (Delta > 24)
+        {
+            // Implausibly far ahead. Resynchronise rather than banking a burst
+            // of future input a client could later cash in as a speed boost.
+            VehiclePawn->ClearPendingInputCommands();
+            LastAcceptedSequence = static_cast<uint16>(Command.Sequence - 1);
+        }
+
+        VehiclePawn->EnqueueInputCommand(Command);
+        LastAcceptedSequence = Command.Sequence;
+    }
 }
 
 void AOverlanePlayerController::ApplyVehicleInput(float Throttle, float Brake, float Steering, bool bBoost)

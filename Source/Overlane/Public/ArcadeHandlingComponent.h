@@ -46,6 +46,19 @@ public:
     void SetSimState(const FOverlaneVehicleSimState& InState);
 
     uint8 GetCollisionEventCount() const { return CollisionEventCount; }
+
+    /**
+     * Feed one command from a remote client's batch into the jitter queue.
+     *
+     * Once anything is enqueued this component is command-driven and stops
+     * sampling its cached scalars, so a client that goes quiet repeats its last
+     * command rather than inheriting whatever was last written locally.
+     */
+    void EnqueueCommand(const FOverlaneInputCommand& Command);
+
+    uint16 GetLastConsumedSequence() const { return LastConsumedSequence; }
+    bool IsInputStarved() const { return bInputStarved; }
+    void ClearPendingCommands();
     float GetBoostChargeRatio() const { return BoostCharge; }
     bool IsBoostActive() const { return bBoostActive; }
 
@@ -109,6 +122,16 @@ protected:
 private:
     bool IsDrivingAllowedHere() const;
     bool ShouldSimulateHere() const;
+
+    /** One command per fixed step, from the queue when driven remotely. */
+    bool ConsumeNextCommand(FOverlaneInputCommand& OutCommand);
+
+    /** Server-side jitter queue for a remotely driven pawn. */
+    TArray<FOverlaneInputCommand> PendingCommands;
+    FOverlaneInputCommand LastConsumedCommand;
+    uint16 LastConsumedSequence = 0;
+    bool bCommandDriven = false;
+    bool bInputStarved = false;
 
     float ThrottleInput = 0.0f;
     float BrakeInput = 0.0f;

@@ -50,6 +50,10 @@ public:
     /** Signed forward speed in cm/s, the unit the traffic and bot logic use. */
     float GetForwardSpeedCms() const;
 
+    /** Server-side: feed one command from a remote client's move batch. */
+    void EnqueueInputCommand(const struct FOverlaneInputCommand& Command);
+    void ClearPendingInputCommands();
+
     /** Scales top speed and acceleration. Only the AI rival moves this. */
     void SetPerformanceScale(float InScale);
 
