@@ -1,0 +1,29 @@
+# Unreal Engine generated output
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/Receipts/
+
+# IDE and local tooling
+.vs/
+.vscode/
+*.sln
+*.suo
+*.user
+*.userprefs
+*.VC.db
+*.VC.opendb
+
+# Local build and packaging output
+ArchivedBuilds/
+PackagedBuilds/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Secrets and local platform configuration
+Config/DefaultEngine.local.ini
+Config/SteamDevAppId.txt
+steam_appid.txt
