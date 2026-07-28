@@ -47,14 +47,18 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
     SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
     SetRootComponent(SceneRoot);
 
+    // Deliberately keeps NO overrides.
+    //
+    // This component used to force AutoExposureBias and BloomIntensity while
+    // being unbound at Priority 1000, which outranks any PostProcessVolume placed
+    // in the level. Art-directing the game from a volume -- the only way to tune
+    // the look without a recompile -- would have silently failed for exposure and
+    // bloom. The component is kept as the hook for effects that genuinely have to
+    // come from code later; everything authored belongs in the level's volume.
     VisualPostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("VisualPostProcess"));
     VisualPostProcess->SetupAttachment(SceneRoot);
     VisualPostProcess->bUnbound = true;
-    VisualPostProcess->Priority = 1000.0f;
-    VisualPostProcess->Settings.bOverride_AutoExposureBias = true;
-    VisualPostProcess->Settings.AutoExposureBias = -1.25f;
-    VisualPostProcess->Settings.bOverride_BloomIntensity = true;
-    VisualPostProcess->Settings.BloomIntensity = 0.18f;
+    VisualPostProcess->Priority = -1.0f;
 
     LeftLandscape = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("LeftLandscape"));
     LeftLandscape->SetupAttachment(SceneRoot);
