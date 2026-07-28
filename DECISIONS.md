@@ -39,3 +39,30 @@
 - **Reason:** This minimizes coupled debugging and prevents premature replication design from driving vehicle feel.
 - **Alternatives:** Build Steam/multiplayer first; fully simulate all traffic actors on every client.
 - **Consequences:** Network traffic synchronization is deferred until Phase 5/6.
+
+## D-010 - Driving netcode: predictive reconciliation with a sequenced ack (2026-07-28)
+
+**Decision.** The owning client simulates its own vehicle on a fixed 60 Hz timestep. The
+server simulates the same input commands authoritatively and acknowledges the last one it
+consumed together with the resulting state. When the client's stored state for that
+sequence differs by more than a dead zone, it resets to the server state and replays every
+unacknowledged command. Traffic is never re-simulated by a client; it is extrapolated from
+a newly replicated lane speed.
+
+**Alternatives considered.** Three architectures were designed independently and judged on
+correctness, solo-developer feasibility and gameplay feel. Each was disqualified by one
+judge. Owner-authoritative movement was rejected structurally: the client would author the
+0.45x collision cut, which is the quantity that decides a dense-traffic race, and the
+proposed positional backstop was arithmetically wrong in the direction that steals wins.
+Continuous blending without replay was rejected because it assigns a speed that is one-way
+latency stale, injecting a ~540 cm/s sawtooth every packet at 150 ms RTT. Full rollback's
+traffic-pose staging was dropped as too expensive and too hard to debug for one developer.
+
+**Consequences.** The handling model must be deterministic, which is why the integrator was
+split into an accumulator and a pure step function first. Replay suppresses the collision
+speed cut - the sweep still blocks, but the discrete 55% branch cannot flip between the
+prediction and the replay, which is what makes replay stable by construction. Rival contact
+must stay cosmetic; if ramming or drafting ever affects speed, rivals have to enter the
+replayed simulation and that is a separate project.
+
+The full plan is in `NETCODE_PLAN.md`.

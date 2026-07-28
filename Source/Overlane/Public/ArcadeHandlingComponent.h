@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Components/ActorComponent.h"
+#include "OverlaneNetTypes.h"
 #include "ArcadeHandlingComponent.generated.h"
 
 UCLASS(ClassGroup = (Vehicle), meta = (BlueprintSpawnableComponent))
@@ -29,6 +30,22 @@ public:
 
     /** Scales top speed and acceleration. The AI rival's difficulty lever. */
     void SetPerformanceScale(float InScale);
+
+    /**
+     * Advance the vehicle by exactly one fixed step from one input command.
+     *
+     * This is the whole simulation and the only thing that may touch sim state.
+     * It is deliberately a pure function of (state, command, FixedDt): server,
+     * owning-client prediction and replay all call it, and all three must agree.
+     */
+    void SimulateStep(const FOverlaneInputCommand& Command, float FixedDt, EOverlaneStepMode Mode);
+
+    FOverlaneVehicleSimState GetSimState() const;
+
+    /** Overwrites simulation state and teleports the pawn. Used by reconciliation. */
+    void SetSimState(const FOverlaneVehicleSimState& InState);
+
+    uint8 GetCollisionEventCount() const { return CollisionEventCount; }
     float GetBoostChargeRatio() const { return BoostCharge; }
     bool IsBoostActive() const { return bBoostActive; }
 
@@ -74,10 +91,25 @@ protected:
     UPROPERTY(EditAnywhere, Category = "Arcade Handling|Collision", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float CollisionSpeedMultiplier = 0.45f;
 
+    /**
+     * Minimum time between two speed cuts.
+     *
+     * Without it the cut fired once per rendered frame, so a 30 ms scrape cost
+     * four cuts at 144 fps (0.45^4 = 0.041x speed) but only two at 60 fps
+     * (0.20x) -- the same contact was ~2.4x harsher on a faster machine. With
+     * the cooldown a scrape costs exactly one cut at any frame rate, which also
+     * turns the cut into a countable discrete event the network layer can match.
+     */
+    UPROPERTY(EditAnywhere, Category = "Arcade Handling|Collision", meta = (ClampMin = "0.0"))
+    float CollisionCutCooldownDuration = 0.12f;
+
     UPROPERTY(EditAnywhere, Category = "Arcade Handling|Speed", meta = (ClampMin = "0.5", ClampMax = "1.15"))
     float PerformanceScale = 1.0f;
 
 private:
+    bool IsDrivingAllowedHere() const;
+    bool ShouldSimulateHere() const;
+
     float ThrottleInput = 0.0f;
     float BrakeInput = 0.0f;
     float SteeringInput = 0.0f;
@@ -85,4 +117,12 @@ private:
     bool bBoostActive = false;
     float BoostCharge = 1.0f;
     float CurrentSpeed = 0.0f;
+
+    /** Leftover real time not yet consumed by a fixed step. */
+    float StepAccumulator = 0.0f;
+    float CollisionCutCooldown = 0.0f;
+    uint8 CollisionEventCount = 0;
+
+    /** Sequence stamped on locally generated commands until the net layer owns it. */
+    uint16 LocalCommandSequence = 0;
 };

@@ -68,6 +68,31 @@ The immediate task is a play test of the compiled placeholder vehicle before any
 | P5-005 | done | Promote the practice bot into a standalone rival | P5-004 | **Validated in play 2026-07-28.** The rival accelerates on open road, slows and holds a gap behind slower traffic instead of grinding its bumper, changes lane when held up, and returns to speed once clear - described by the tester as driving "just like us". Forward sensing on the shared following curve, real braking, steered lane changes with relative-speed clearance, spin recovery, KOLAY/NORMAL/ZOR difficulty with turbo and rubber banding, racer contact feedback, crimson body, and a HUD rival gap that reads correctly and flips colour on overtake. Traffic sees the bot for spawn safety, spawn window and lane-change safety. |
 | P5-006 | pending | Promote practice bot into a competitive race participant | P5-005 | Human and bot racers use a shared authoritative participant list; the bot can finish, place, and be reported correctly to all clients without corrupting player/session handling. |
 
+## Phase 5b — driving netcode (NET-001)
+
+Architecture chosen 2026-07-28 after three competing designs were judged on correctness,
+solo-developer feasibility and gameplay feel: **predictive reconciliation with a sequenced
+server ack**. The owning client simulates its own vehicle on a fixed timestep, the server
+simulates the same inputs authoritatively and acks the last one it consumed together with
+the resulting state, and the client replays unacknowledged input from that state when the
+error exceeds a dead zone. Traffic is not re-simulated by clients; it is extrapolated from
+a replicated lane speed. Full plan and rationale in `DECISIONS.md`.
+
+| ID | Status | Task | Depends on | Acceptance criteria |
+|---|---|---|---|---|
+| N-000 | done | Fixed timestep and pure step function | — | `UArcadeHandlingComponent` split into an accumulator and `SimulateStep(Command, FixedDt, Mode)`; `FOverlaneVehicleSimState` get/set; collision cut gains a 0.12 s cooldown and a wrapping event counter. A scrape must cost exactly one speed cut at both 60 and 144 fps. |
+| N-001 | pending | Pause-gate migration and CVars | N-000 | The driving gate falls back to `AOverlaneRaceGameState` when `GetAuthGameMode` is null, so it is not silently a no-op on clients. Host pauses mid-race and both windows stop. |
+| N-002 | pending | Sequenced, redundant input batches | N-000 | `ServerSendMoveBatch` at 30 Hz carrying every unacked command. With `NetEmulation.PktLoss 20`, holding then releasing throttle must coast to a stop and never run away. |
+| N-003 | pending | Traffic lane speed and client extrapolation | N-000 | `ReplicatedLaneSpeed` on traffic plus capped client-side kinematic extrapolation; client traffic position error under ~15 cm at 150 ms RTT. |
+| N-004 | pending | Wire-format swap, behaviour neutral | N-002 | `FOverlaneMoveAck` replaces `OwnerServerTransform`; no behaviour change, so a replication break is diagnosable in isolation. |
+| N-005 | pending | Correction debug overlay / server ghost | N-004 | `overlane.Net.DrawCorrection` draws the server pose and the error magnitude. Ships before any enforcement. |
+| N-006 | pending | Authority hygiene | N-004 | Client control RPCs for pause/restart/menu; `ReturnToMainMenu` uses server travel on a listen server. A joined client's only exit today is Alt+F4. |
+| N-007 | pending | Prediction on, reconcile in log-only mode | N-005, N-006 | The client simulates locally; corrections are measured and logged but not applied. Error distribution recorded before thresholds are chosen. |
+| N-008 | pending | Reconcile enforcement, replay and smoothing | N-007 | Replay re-simulates unacked input with the collision cut suppressed. At 100 ms RTT and 2% loss the local car answers steering within one frame and never visibly snaps. |
+| N-009 | pending | Visual absorber | N-008 | Collision root is smoothed and the mesh lags only on hard snaps. |
+| N-010 | pending | Per-player race state | N-008 | Score, near misses, collisions and progress move to `AOverlanePlayerState`; the winner scan stops being nested inside the host-pawn null check. |
+| N-011 | pending | Rival proxies and boost visibility | N-008 | Remote cars are extrapolated to now rather than interpolated at a fixed delay, and block in prediction. |
+
 ## Phase 6 — visual vertical slice
 
 | ID | Status | Task | Depends on | Acceptance criteria |
