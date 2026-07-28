@@ -68,21 +68,22 @@ private:
     TArray<TObjectPtr<ATrafficVehicleBase>> CachedTraffic;
 
     // --- Following -----------------------------------------------------------
-    // The two distances mirror ATrafficDirector's own constants so the rival and
-    // the traffic it drives among behave consistently.
-    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "0.0"))
-    float FollowingDistance = 3200.0f;
-
-    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "0.0"))
+    /** Buffer held at matched speed, mirroring the traffic director's constant. */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1.0"))
     float MinimumFollowingDistance = 1200.0f;
 
     /**
-     * Traffic closes on traffic at ~1050 cm/s, but the bot closes at up to
-     * 3950 cm/s, so the raw traffic distances give it under a second of warning.
-     * The distances are scaled by real closing speed, keeping the curve shape.
+     * The deceleration the follow law plans around, well below the pawn's
+     * BrakingDeceleration of 7200 cm/s^2 so there is headroom for a surprise.
+     *
+     * This replaced a scaled-threshold law whose window was derived from the
+     * bot's own instantaneous speed. That was a feedback oscillator: faster bot
+     * -> wider window -> follow engages -> brake -> narrower window -> follow
+     * disengages -> full throttle, cycling forever. The law below is continuous
+     * and monotonic in gap, so it has no threshold to cross.
      */
-    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1.0"))
-    float ReferenceClosingSpeed = 1050.0f;
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "100.0"))
+    float ComfortDeceleration = 2600.0f;
 
     /** Bot half-length plus the largest traffic half-length, rounded up. */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "0.0"))
@@ -110,6 +111,17 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.1"))
     float SteeringSlewRate = 4.0f;
 
+    /**
+     * A merge needs a nearer aim point than lane-holding does, or the lateral
+     * error is spread over so much look-ahead that the command stays tiny and
+     * the car drifts across sideways instead of committing.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+    float MergeLookAheadScale = 0.5f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.1"))
+    float MergeSteeringSlewRate = 6.5f;
+
     // --- Overtaking ----------------------------------------------------------
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float BlockedTimeToOvertake = 0.6f;
@@ -124,7 +136,7 @@ private:
     float LaneChangeTimeout = 4.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
-    float LaneCompleteTolerance = 90.0f;
+    float LaneCompleteTolerance = 120.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float RivalPawnClearance = 700.0f;
@@ -160,8 +172,11 @@ private:
     float TrafficCacheRemaining = 0.0f;
     float RivalContactCooldown = 0.0f;
     float LastGapToBlocker = BigDistance;
+    /** Sign of the lateral offset when the current merge began, 0 when not merging. */
+    float MergeStartOffsetSign = 0.0f;
     int32 CurrentLaneIndex = INDEX_NONE;
     int32 TargetLaneIndex = INDEX_NONE;
+    int32 SteeringTargetLaneIndex = INDEX_NONE;
     bool bBlockedAhead = false;
     bool bBoostEngaged = false;
     bool bWasRivalContactActive = false;

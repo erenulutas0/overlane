@@ -82,7 +82,12 @@ AOverlanePlayerController::AOverlanePlayerController()
     DrivingMappingContext->MapKey(MenuAdjustRightAction, EKeys::Right);
     DrivingMappingContext->MapKey(MenuAdjustRightAction, EKeys::D);
     DrivingMappingContext->MapKey(MenuAdjustRightAction, EKeys::Gamepad_DPad_Right);
+    // Escape only reaches the game in a packaged build: in PIE the editor
+    // consumes it and stops the session, so a back key that also works while
+    // testing in the editor is mapped alongside it.
     DrivingMappingContext->MapKey(MenuBackAction, EKeys::Escape);
+    DrivingMappingContext->MapKey(MenuBackAction, EKeys::BackSpace);
+    DrivingMappingContext->MapKey(MenuBackAction, EKeys::Q);
     DrivingMappingContext->MapKey(MenuBackAction, EKeys::Gamepad_FaceButton_Right);
     DrivingMappingContext->MapKey(ReturnToMenuAction, EKeys::M);
     DrivingMappingContext->MapKey(ReturnToMenuAction, EKeys::Gamepad_Special_Left);

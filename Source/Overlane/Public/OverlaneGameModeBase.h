@@ -63,6 +63,9 @@ public:
 
     /** Signed metres along the route: positive means the human is ahead. */
     int32 GetRivalGapMeters() const;
+
+    /** One-line rival telemetry for the traffic debug overlay. */
+    FString GetRivalDebugText() const;
     int32 GetSettingsSelection() const { return SettingsSelection; }
     int32 GetSettingsRowCount() const { return SettingsRowCount; }
     int32 GetMenuSelection() const { return MenuSelection; }

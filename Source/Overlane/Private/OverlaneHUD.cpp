@@ -48,7 +48,7 @@ void AOverlaneHUD::DrawHUD()
         RefreshItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(RefreshItem);
 
-        FCanvasTextItem BrowserHint(FVector2D((Canvas->ClipX * 0.5f) - 240.0f, 460.0f), FText::FromString(TEXT("W / S: SEC    ENTER: KATIL    ESC: GERI")), GEngine->GetSmallFont(), FLinearColor::White);
+        FCanvasTextItem BrowserHint(FVector2D((Canvas->ClipX * 0.5f) - 240.0f, 460.0f), FText::FromString(TEXT("W / S: SEC    ENTER: KATIL    Q veya BACKSPACE: GERI")), GEngine->GetSmallFont(), FLinearColor::White);
         BrowserHint.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(BrowserHint);
         return;
@@ -116,7 +116,7 @@ void AOverlaneHUD::DrawHUD()
             Canvas->DrawItem(SettingItem);
         }
 
-        FCanvasTextItem HintItem(FVector2D((Canvas->ClipX * 0.5f) - 220.0f, 470.0f), FText::FromString(TEXT("YUKARI / ASAGI veya W / S: SEC   SOL / SAG veya A / D: DEGISTIR   ESC: GERI")), GEngine->GetSmallFont(), FLinearColor::White);
+        FCanvasTextItem HintItem(FVector2D((Canvas->ClipX * 0.5f) - 230.0f, 490.0f), FText::FromString(TEXT("YUKARI / ASAGI veya W / S: SEC   SOL / SAG veya A / D: DEGISTIR   Q veya BACKSPACE: GERI")), GEngine->GetSmallFont(), FLinearColor::White);
         HintItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(HintItem);
         return;
@@ -344,5 +344,13 @@ void AOverlaneHUD::DrawHUD()
         FCanvasTextItem TrafficDebugItem(FVector2D(48.0f, Canvas->ClipY - 52.0f), FText::FromString(TrafficDebugText), GEngine->GetSmallFont(), FLinearColor(0.35f, 1.0f, 0.55f));
         TrafficDebugItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(TrafficDebugItem);
+
+        const FString RivalDebugText = MenuGameMode->GetRivalDebugText();
+        if (!RivalDebugText.IsEmpty())
+        {
+            FCanvasTextItem RivalDebugItem(FVector2D(48.0f, Canvas->ClipY - 28.0f), FText::FromString(RivalDebugText), GEngine->GetSmallFont(), FLinearColor(1.0f, 0.78f, 0.28f));
+            RivalDebugItem.EnableShadow(FLinearColor::Black);
+            Canvas->DrawItem(RivalDebugItem);
+        }
     }
 }

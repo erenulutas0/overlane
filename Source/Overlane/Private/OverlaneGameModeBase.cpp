@@ -397,6 +397,21 @@ void AOverlaneGameModeBase::SpawnPracticeBotForSoloRace()
     PracticeBotController->Possess(BotVehicle);
 }
 
+FString AOverlaneGameModeBase::GetRivalDebugText() const
+{
+    if (!PracticeBotController)
+    {
+        return FString();
+    }
+
+    const float BlockerGap = PracticeBotController->GetTrackedGapMeters();
+    return FString::Printf(
+        TEXT("BOT: %d KM/H  ONDEKI: %s  SERIT %d"),
+        FMath::RoundToInt(PracticeBotController->GetBotSpeedKph()),
+        BlockerGap < 0.0f ? TEXT("YOK") : *FString::Printf(TEXT("%d M"), FMath::RoundToInt(BlockerGap)),
+        PracticeBotController->GetCurrentLaneIndex());
+}
+
 int32 AOverlaneGameModeBase::GetRivalGapMeters() const
 {
     const APawn* BotPawn = PracticeBotController ? PracticeBotController->GetPawn() : nullptr;
