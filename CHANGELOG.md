@@ -144,3 +144,44 @@
 - The bot is spawned only for standalone solo races, starts one lane over and 90 m ahead, does not boost, score, or lane-change.
 - The bot now acts as a real solo rival: if it reaches the finish first, the run ends and the result screen reports `PRAKTIK BOT KAZANDI`; player personal records are never overwritten by a bot win.
 - Listen-server multiplayer remains unchanged while this first driving pass is validated.
+
+# 2026-07-28 - Session host/join flow and AI racer identity (P5-002)
+
+## Practice bot: finished the interrupted work
+
+- Replaced the unread `PracticeBot` actor tag with a replicated `bIsAIRacer` flag on
+  `AOverlaneVehiclePawn`. Tags are not replicated, so clients could never have read it.
+- Fixed a live scoring corruption: the bot shares the human pawn class, so its near
+  passes were adding +250 to the human score and each bot collision was costing the
+  human 750 points. All three scoring paths now early-return for AI racers.
+- The bot no longer calls `MarkPlayerCollision`, which had been permanently disarming
+  traffic cars so they could never award the human a near miss.
+- `PostLogin` now destroys the practice bot when a client joins, instead of leaving a
+  non-replicated controller driving an unowned pawn inside a multiplayer race.
+- Corrected the result string to `ANTRENMAN BOTU KAZANDI`.
+
+## Session layer
+
+- Enabled `OnlineSubsystem`, `OnlineSubsystemUtils` and `OnlineSubsystemNull`; added the
+  first two to `Overlane.Build.cs` and configured `DefaultPlatformService=NULL`.
+- Added `UOverlaneSessionSubsystem` (GameInstance subsystem) with host, find, join and
+  leave built on the classic `IOnlineSubsystem` interface, so Phase 7 can swap in
+  OnlineSubsystemSteam via config plus a `bUseLanMatch` flip rather than a rewrite.
+- Hosting creates a listen session and server-travels to the race map; joining resolves
+  the connect string and client-travels. No IP address is ever typed.
+- Stale sessions are destroyed before a new one is created.
+
+## UI
+
+- Fixed a blocking HUD defect: `DrawHUD` early-returned without a vehicle pawn and the
+  menu blocks sat below that guard, so a player with no pawn saw a blank screen.
+  Menu, lobby and browser screens are now drawn before the pawn is required.
+- Main menu is now a four-row vertical list: SOLO YARIS / ONLINE - OYUN KUR /
+  ONLINE - OYUN BUL / AYARLAR.
+- Added a session browser screen (results plus a TEKRAR ARA row) and a host lobby screen
+  showing the connected player count, where Enter starts the race.
+- W/S navigate the browser; Esc and the pause key back out of it.
+
+`OverlaneEditor Win64 Development` compiles clean. **No part of the session flow has been
+run yet** - `OnlineSubsystemNull` only discovers over LAN broadcast, so it needs two
+packaged builds on one network to validate.

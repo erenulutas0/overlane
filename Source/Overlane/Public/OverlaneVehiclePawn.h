@@ -38,6 +38,15 @@ public:
     void RecoverToStart();
     void SetCameraFovOffset(float InOffset);
 
+    /**
+     * Marks this pawn as an AI-driven racer rather than a human one.  The flag is
+     * replicated because clients need it to label rivals; an actor tag would not
+     * survive the wire.  Every scoring path is keyed off this, so a bot can share
+     * the human pawn class without contributing to the human's race score.
+     */
+    void SetAIRacer(bool bInIsAIRacer);
+    bool IsAIRacer() const { return bIsAIRacer; }
+
 protected:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
@@ -134,6 +143,9 @@ private:
     float CollisionReleaseDistance = 800.0f;
 
     TSet<TWeakObjectPtr<class ATrafficVehicleBase>> ActiveTrafficCollisionContacts;
+
+    UPROPERTY(Replicated)
+    bool bIsAIRacer = false;
 
     UPROPERTY(Replicated)
     float ReplicatedSpeedKph = 0.0f;

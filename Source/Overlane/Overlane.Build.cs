@@ -12,7 +12,13 @@ public class Overlane : ModuleRules
             "CoreUObject",
             "Engine",
             "InputCore",
-            "EnhancedInput"
+            "EnhancedInput",
+
+            // Session discovery / host / join. The classic OnlineSubsystem path is
+            // used rather than the newer OnlineServices because OnlineSubsystemSteam
+            // is the mature implementation we intend to swap in for Phase 7.
+            "OnlineSubsystem",
+            "OnlineSubsystemUtils"
         });
     }
 }

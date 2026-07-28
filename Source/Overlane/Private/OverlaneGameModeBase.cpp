@@ -5,6 +5,7 @@
 #include "OverlanePlayerController.h"
 #include "OverlaneProgressSaveGame.h"
 #include "OverlaneRaceGameState.h"
+#include "OverlaneSessionSubsystem.h"
 #include "OverlaneSettingsSaveGame.h"
 #include "OverlaneVehiclePawn.h"
 #include "TrafficDirector.h"
@@ -47,6 +48,14 @@ void AOverlaneGameModeBase::BeginPlay()
         {
             StartSoloRace();
         }
+        else if (World->GetNetMode() == NM_ListenServer)
+        {
+            // Arriving here means the session subsystem just travelled us onto the
+            // map as a host. Sit in a lobby waiting for friends instead of dropping
+            // the host back onto the solo main menu.
+            bShowingMainMenu = false;
+            bInOnlineLobby = true;
+        }
 
         SyncNetworkRaceState();
     }
@@ -62,6 +71,11 @@ void AOverlaneGameModeBase::PostLogin(APlayerController* NewPlayer)
     }
 
     bMultiplayerRace = true;
+
+    // The practice bot is a standalone-only construct: its controller does not
+    // replicate and its pawn has no owning connection, so leaving it alive once a
+    // client joins would put an invisible, unsynchronised car on the road.
+    DestroyPracticeBot();
 
     // If a client joins an already-running solo test, replace the local pool
     // with the small server-authoritative multiplayer pool.
@@ -229,7 +243,7 @@ FString AOverlaneGameModeBase::GetRaceWinnerText() const
         return FString();
     }
 
-    return bPracticeBotWon ? TEXT("PRAKTIK BOT KAZANDI") : TEXT("SEN KAZANDIN!");
+    return bPracticeBotWon ? TEXT("ANTRENMAN BOTU KAZANDI") : TEXT("SEN KAZANDIN!");
 }
 
 float AOverlaneGameModeBase::GetBestSoloTimeSeconds() const
@@ -358,7 +372,9 @@ void AOverlaneGameModeBase::SpawnPracticeBotForSoloRace()
         return;
     }
 
-    BotVehicle->Tags.AddUnique(TEXT("PracticeBot"));
+    // A replicated flag, not an actor tag: tags never reach clients, and every
+    // scoring path needs to be able to tell a bot pawn from a human one.
+    BotVehicle->SetAIRacer(true);
 
     PracticeBotController = World->SpawnActor<AOverlaneBotDriverController>(
         AOverlaneBotDriverController::StaticClass(), BotVehicle->GetActorLocation(), BotVehicle->GetActorRotation(), SpawnParameters);
@@ -370,6 +386,23 @@ void AOverlaneGameModeBase::SpawnPracticeBotForSoloRace()
 
     PracticeBotController->ConfigurePracticeRoute(BotLane, BotDistance);
     PracticeBotController->Possess(BotVehicle);
+}
+
+void AOverlaneGameModeBase::DestroyPracticeBot()
+{
+    if (!PracticeBotController)
+    {
+        return;
+    }
+
+    if (APawn* BotPawn = PracticeBotController->GetPawn())
+    {
+        PracticeBotController->UnPossess();
+        BotPawn->Destroy();
+    }
+
+    PracticeBotController->Destroy();
+    PracticeBotController = nullptr;
 }
 
 void AOverlaneGameModeBase::FinishRace(APlayerController* WinningPlayer, bool bWonByPracticeBot)
@@ -432,6 +465,12 @@ void AOverlaneGameModeBase::SyncNetworkRaceState()
 
 void AOverlaneGameModeBase::OpenSettings()
 {
+    // The browser owns the screen while it is open; settings would draw over it.
+    if (bShowingSessionBrowser)
+    {
+        return;
+    }
+
     if (bShowingMainMenu || bRacePaused)
     {
         bSettingsOpenedFromPause = bRacePaused;
@@ -494,6 +533,82 @@ void AOverlaneGameModeBase::AdjustSelectedSetting(int32 Direction)
     UGameplayStatics::SaveGameToSlot(LocalSettings, TEXT("OverlaneLocalSettings"), 0);
 }
 
+UOverlaneSessionSubsystem* AOverlaneGameModeBase::GetSessionSubsystem() const
+{
+    const UWorld* const World = GetWorld();
+    UGameInstance* const GameInstance = World ? World->GetGameInstance() : nullptr;
+    return GameInstance ? GameInstance->GetSubsystem<UOverlaneSessionSubsystem>() : nullptr;
+}
+
+void AOverlaneGameModeBase::HostOnlineRace()
+{
+    if (UOverlaneSessionSubsystem* const Sessions = GetSessionSubsystem())
+    {
+        // The subsystem travels this machine onto the map as a listen server once
+        // the session is created, so there is nothing else to do here.
+        Sessions->HostSession(4);
+    }
+}
+
+void AOverlaneGameModeBase::OpenSessionBrowser()
+{
+    bShowingSessionBrowser = true;
+    bShowingSettings = false;
+    SessionSelection = 0;
+    RefreshSessionSearch();
+}
+
+void AOverlaneGameModeBase::CloseSessionBrowser()
+{
+    bShowingSessionBrowser = false;
+    SessionSelection = 0;
+}
+
+void AOverlaneGameModeBase::RefreshSessionSearch()
+{
+    if (UOverlaneSessionSubsystem* const Sessions = GetSessionSubsystem())
+    {
+        Sessions->FindSessions();
+    }
+}
+
+void AOverlaneGameModeBase::StartRaceFromLobby()
+{
+    if (!bInOnlineLobby)
+    {
+        return;
+    }
+
+    bInOnlineLobby = false;
+    StartSoloRace();
+}
+
+int32 AOverlaneGameModeBase::GetFoundSessionCount() const
+{
+    const UOverlaneSessionSubsystem* const Sessions = GetSessionSubsystem();
+    return Sessions ? Sessions->GetFoundSessionCount() : 0;
+}
+
+FString AOverlaneGameModeBase::GetFoundSessionLabel(int32 Index) const
+{
+    const UOverlaneSessionSubsystem* const Sessions = GetSessionSubsystem();
+    return Sessions ? Sessions->GetFoundSessionLabel(Index) : FString();
+}
+
+int32 AOverlaneGameModeBase::GetConnectedPlayerCount() const
+{
+    // AGameModeBase::GetNumPlayers is non-const, and the HUD reads this through a
+    // const game mode pointer, so count the replicated player array instead.
+    const AGameStateBase* const CurrentGameState = GetGameState<AGameStateBase>();
+    return CurrentGameState ? CurrentGameState->PlayerArray.Num() : 0;
+}
+
+FString AOverlaneGameModeBase::GetSessionStatusText() const
+{
+    const UOverlaneSessionSubsystem* const Sessions = GetSessionSubsystem();
+    return Sessions ? Sessions->GetStatusText() : FString(TEXT("CEVRIMICI SERVIS YOK"));
+}
+
 void AOverlaneGameModeBase::NavigateMenu(int32 Direction)
 {
     if (bShowingSettings || Direction == 0)
@@ -501,7 +616,16 @@ void AOverlaneGameModeBase::NavigateMenu(int32 Direction)
         return;
     }
 
-    const int32 OptionCount = bShowingMainMenu ? 2 : (bRacePaused ? 4 : 0);
+    // The session browser is its own list: navigation walks search results, and
+    // an extra trailing row is reserved for "search again".
+    if (bShowingSessionBrowser)
+    {
+        const int32 RowCount = GetFoundSessionCount() + 1;
+        SessionSelection = (SessionSelection + Direction + RowCount) % RowCount;
+        return;
+    }
+
+    const int32 OptionCount = bShowingMainMenu ? MainMenuOptionCount : (bRacePaused ? 4 : 0);
     if (OptionCount > 0)
     {
         MenuSelection = (MenuSelection + Direction + OptionCount) % OptionCount;
@@ -515,15 +639,45 @@ void AOverlaneGameModeBase::ConfirmMenuSelection()
         return;
     }
 
+    // The browser's last row is "search again"; every earlier row is a joinable
+    // host. Joining hands off to the subsystem, which client-travels this machine.
+    if (bShowingSessionBrowser)
+    {
+        const int32 ResultCount = GetFoundSessionCount();
+        if (SessionSelection >= ResultCount)
+        {
+            RefreshSessionSearch();
+        }
+        else if (UOverlaneSessionSubsystem* const Sessions = GetSessionSubsystem())
+        {
+            Sessions->JoinFoundSession(SessionSelection);
+        }
+        return;
+    }
+
+    // The host sits in the lobby until it decides everyone has arrived.
+    if (bInOnlineLobby)
+    {
+        StartRaceFromLobby();
+        return;
+    }
+
     if (bShowingMainMenu)
     {
-        if (MenuSelection == 0)
+        switch (MenuSelection)
         {
+        case 0:
             StartSoloRace();
-        }
-        else
-        {
+            break;
+        case 1:
+            HostOnlineRace();
+            break;
+        case 2:
+            OpenSessionBrowser();
+            break;
+        default:
             OpenSettings();
+            break;
         }
         return;
     }

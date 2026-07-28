@@ -39,6 +39,22 @@ public:
     int32 GetBestSoloScore() const;
     bool IsMainMenuVisible() const { return bShowingMainMenu; }
     bool IsSettingsVisible() const { return bShowingSettings; }
+
+    // --- Online session flow (P5-002) ---------------------------------------
+    // The host owns all of this: a joined client has no GameMode, so its HUD
+    // reads the replicated lobby state from AOverlaneRaceGameState instead.
+    bool IsSessionBrowserVisible() const { return bShowingSessionBrowser; }
+    bool IsOnlineLobbyVisible() const { return bInOnlineLobby; }
+    int32 GetSessionSelection() const { return SessionSelection; }
+    int32 GetFoundSessionCount() const;
+    FString GetFoundSessionLabel(int32 Index) const;
+    FString GetSessionStatusText() const;
+    int32 GetConnectedPlayerCount() const;
+    void HostOnlineRace();
+    void OpenSessionBrowser();
+    void CloseSessionBrowser();
+    void RefreshSessionSearch();
+    void StartRaceFromLobby();
     bool IsTrafficDebugOverlayVisible() const;
     int32 GetSettingsSelection() const { return SettingsSelection; }
     int32 GetMenuSelection() const { return MenuSelection; }
@@ -62,6 +78,7 @@ private:
     void FinishRace(class APlayerController* WinningPlayer, bool bWonByPracticeBot = false);
     void SyncNetworkRaceState();
     void SpawnPracticeBotForSoloRace();
+    void DestroyPracticeBot();
     UPROPERTY(EditDefaultsOnly, Category = "Race", meta = (ClampMin = "0.0"))
     float CountdownDuration = 3.0f;
 
@@ -113,8 +130,16 @@ private:
     int32 NearMissScore = 0;
     int32 RaceScore = 0;
     int32 WinningPlayerId = INDEX_NONE;
+    class UOverlaneSessionSubsystem* GetSessionSubsystem() const;
+
+    /** SOLO YARIS / OYUN KUR / OYUN BUL / AYARLAR. */
+    static constexpr int32 MainMenuOptionCount = 4;
+
     int32 SettingsSelection = 0;
     int32 MenuSelection = 0;
+    int32 SessionSelection = 0;
+    bool bShowingSessionBrowser = false;
+    bool bInOnlineLobby = false;
     bool bShowingMainMenu = true;
     bool bShowingSettings = false;
     bool bSettingsOpenedFromPause = false;

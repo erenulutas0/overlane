@@ -266,6 +266,7 @@ bool AOverlaneVehiclePawn::IsBoostActive() const
 void AOverlaneVehiclePawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
     Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+    DOREPLIFETIME(AOverlaneVehiclePawn, bIsAIRacer);
     DOREPLIFETIME(AOverlaneVehiclePawn, ReplicatedSpeedKph);
     DOREPLIFETIME_CONDITION(AOverlaneVehiclePawn, ReplicatedBoostCharge, COND_OwnerOnly);
     DOREPLIFETIME_CONDITION(AOverlaneVehiclePawn, bReplicatedBoostActive, COND_OwnerOnly);
@@ -278,6 +279,11 @@ void AOverlaneVehiclePawn::OnRep_OwnerServerTransform()
     {
         SetActorTransform(OwnerServerTransform, false, nullptr, ETeleportType::TeleportPhysics);
     }
+}
+
+void AOverlaneVehiclePawn::SetAIRacer(bool bInIsAIRacer)
+{
+    bIsAIRacer = bInIsAIRacer;
 }
 
 void AOverlaneVehiclePawn::RecoverToStart()
@@ -353,13 +359,26 @@ void AOverlaneVehiclePawn::RegisterTrafficImpact(ATrafficVehicleBase* TrafficVeh
 
     TrafficImpactFeedbackRemaining = TrafficImpactFeedbackDuration;
     TrafficImpactFeedbackColor = TrafficVehicle->GetTrafficColor();
-    TrafficVehicle->MarkPlayerCollision();
+
+    // An AI rival must never touch human race state.  MarkPlayerCollision would
+    // permanently disarm this traffic car's near-miss encounter, so the bot would
+    // silently deny the human points just by driving near the same traffic.
+    if (!bIsAIRacer)
+    {
+        TrafficVehicle->MarkPlayerCollision();
+    }
+
     if (ActiveTrafficCollisionContacts.Contains(TrafficVehicle))
     {
         return;
     }
 
     ActiveTrafficCollisionContacts.Add(TrafficVehicle);
+    if (bIsAIRacer)
+    {
+        return;
+    }
+
     if (AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr)
     {
         GameMode->RegisterTrafficCollision();
@@ -368,6 +387,12 @@ void AOverlaneVehiclePawn::RegisterTrafficImpact(ATrafficVehicleBase* TrafficVeh
 
 bool AOverlaneVehiclePawn::TryRegisterNearMiss(const FLinearColor& InColor)
 {
+    // A bot threading traffic must not award the human near-miss points.
+    if (bIsAIRacer)
+    {
+        return false;
+    }
+
     AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr;
     if (!GameMode || !GameMode->IsRaceActive() || GameMode->IsRacePaused())
     {

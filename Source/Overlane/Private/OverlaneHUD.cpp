@@ -12,36 +12,92 @@ void AOverlaneHUD::DrawHUD()
 {
     Super::DrawHUD();
 
-    const AOverlaneVehiclePawn* VehiclePawn = Cast<AOverlaneVehiclePawn>(GetOwningPlayerController() ? GetOwningPlayerController()->GetPawn() : nullptr);
-    if (!Canvas || !VehiclePawn || !GEngine)
+    if (!Canvas || !GEngine)
     {
         return;
     }
 
     const AOverlaneGameModeBase* MenuGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr;
     const AOverlaneRaceGameState* NetworkRaceState = GetWorld() ? GetWorld()->GetGameState<AOverlaneRaceGameState>() : nullptr;
+
+    // The menu family is drawn before a pawn is required. The main menu and the
+    // online browser both run while the local player has no vehicle at all, so
+    // gating them on a driveable pawn would leave the player on a blank screen.
+    if (MenuGameMode && MenuGameMode->IsSessionBrowserVisible())
+    {
+        FCanvasTextItem BrowserTitle(FVector2D((Canvas->ClipX * 0.5f) - 150.0f, 150.0f), FText::FromString(TEXT("OYUN BUL")), GEngine->GetLargeFont(), FLinearColor(0.2f, 0.75f, 1.0f));
+        BrowserTitle.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(BrowserTitle);
+
+        FCanvasTextItem StatusItem(FVector2D((Canvas->ClipX * 0.5f) - 150.0f, 200.0f), FText::FromString(MenuGameMode->GetSessionStatusText()), GEngine->GetMediumFont(), FLinearColor(1.0f, 0.82f, 0.2f));
+        StatusItem.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(StatusItem);
+
+        const int32 ResultCount = MenuGameMode->GetFoundSessionCount();
+        for (int32 Index = 0; Index < ResultCount; ++Index)
+        {
+            const bool bSelected = MenuGameMode->GetSessionSelection() == Index;
+            const FString RowText = FString::Printf(TEXT("%s %s"), bSelected ? TEXT(">") : TEXT(" "), *MenuGameMode->GetFoundSessionLabel(Index));
+            FCanvasTextItem RowItem(FVector2D((Canvas->ClipX * 0.5f) - 240.0f, 255.0f + (Index * 34.0f)), FText::FromString(RowText), GEngine->GetMediumFont(), bSelected ? FLinearColor(0.35f, 1.0f, 0.55f) : FLinearColor::White);
+            RowItem.EnableShadow(FLinearColor::Black);
+            Canvas->DrawItem(RowItem);
+        }
+
+        const bool bRefreshSelected = MenuGameMode->GetSessionSelection() >= ResultCount;
+        FCanvasTextItem RefreshItem(FVector2D((Canvas->ClipX * 0.5f) - 240.0f, 255.0f + (ResultCount * 34.0f)), FText::FromString(FString::Printf(TEXT("%s TEKRAR ARA"), bRefreshSelected ? TEXT(">") : TEXT(" "))), GEngine->GetMediumFont(), bRefreshSelected ? FLinearColor(0.35f, 1.0f, 0.55f) : FLinearColor::White);
+        RefreshItem.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(RefreshItem);
+
+        FCanvasTextItem BrowserHint(FVector2D((Canvas->ClipX * 0.5f) - 240.0f, 460.0f), FText::FromString(TEXT("W / S: SEC    ENTER: KATIL    ESC: GERI")), GEngine->GetSmallFont(), FLinearColor::White);
+        BrowserHint.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(BrowserHint);
+        return;
+    }
+
+    if (MenuGameMode && MenuGameMode->IsOnlineLobbyVisible())
+    {
+        FCanvasTextItem LobbyTitle(FVector2D((Canvas->ClipX * 0.5f) - 90.0f, 170.0f), FText::FromString(TEXT("LOBI")), GEngine->GetLargeFont(), FLinearColor(0.2f, 0.75f, 1.0f));
+        LobbyTitle.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(LobbyTitle);
+
+        const FString PlayerCountText = FString::Printf(TEXT("OYUNCULAR: %d / 4"), MenuGameMode->GetConnectedPlayerCount());
+        FCanvasTextItem PlayerCountItem(FVector2D((Canvas->ClipX * 0.5f) - 110.0f, 240.0f), FText::FromString(PlayerCountText), GEngine->GetMediumFont(), FLinearColor::White);
+        PlayerCountItem.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(PlayerCountItem);
+
+        FCanvasTextItem LobbyHint(FVector2D((Canvas->ClipX * 0.5f) - 175.0f, 300.0f), FText::FromString(TEXT("ENTER: YARISI BASLAT")), GEngine->GetMediumFont(), FLinearColor(0.35f, 1.0f, 0.55f));
+        LobbyHint.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(LobbyHint);
+        return;
+    }
+
     if (MenuGameMode && MenuGameMode->IsMainMenuVisible() && !MenuGameMode->IsSettingsVisible())
     {
-        FCanvasTextItem TitleItem(FVector2D((Canvas->ClipX * 0.5f) - 115.0f, 160.0f), FText::FromString(TEXT("OVERLANE")), GEngine->GetLargeFont(), FLinearColor(0.2f, 0.75f, 1.0f));
+        FCanvasTextItem TitleItem(FVector2D((Canvas->ClipX * 0.5f) - 115.0f, 150.0f), FText::FromString(TEXT("OVERLANE")), GEngine->GetLargeFont(), FLinearColor(0.2f, 0.75f, 1.0f));
         TitleItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(TitleItem);
 
-        FCanvasTextItem SubtitleItem(FVector2D((Canvas->ClipX * 0.5f) - 120.0f, 215.0f), FText::FromString(TEXT("TRAFFIC SPRINT")), GEngine->GetMediumFont(), FLinearColor::White);
+        FCanvasTextItem SubtitleItem(FVector2D((Canvas->ClipX * 0.5f) - 120.0f, 205.0f), FText::FromString(TEXT("TRAFFIC SPRINT")), GEngine->GetMediumFont(), FLinearColor::White);
         SubtitleItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(SubtitleItem);
 
-        const bool bSoloSelected = MenuGameMode->GetMenuSelection() == 0;
-        FCanvasTextItem SoloItem(FVector2D((Canvas->ClipX * 0.5f) - 230.0f, 315.0f), FText::FromString(TEXT("[>] SOLO YARIS")), GEngine->GetMediumFont(), bSoloSelected ? FLinearColor(0.35f, 1.0f, 0.55f) : FLinearColor::White);
-        SoloItem.EnableShadow(FLinearColor::Black);
-        Canvas->DrawItem(SoloItem);
+        static const TCHAR* MainMenuOptions[] = { TEXT("SOLO YARIS"), TEXT("ONLINE - OYUN KUR"), TEXT("ONLINE - OYUN BUL"), TEXT("AYARLAR") };
+        for (int32 Index = 0; Index < UE_ARRAY_COUNT(MainMenuOptions); ++Index)
+        {
+            const bool bSelected = MenuGameMode->GetMenuSelection() == Index;
+            const FString OptionText = FString::Printf(TEXT("%s %s"), bSelected ? TEXT(">") : TEXT(" "), MainMenuOptions[Index]);
+            FCanvasTextItem OptionItem(FVector2D((Canvas->ClipX * 0.5f) - 150.0f, 275.0f + (Index * 38.0f)), FText::FromString(OptionText), GEngine->GetMediumFont(), bSelected ? FLinearColor(0.35f, 1.0f, 0.55f) : FLinearColor::White);
+            OptionItem.EnableShadow(FLinearColor::Black);
+            Canvas->DrawItem(OptionItem);
+        }
 
-        FCanvasTextItem SettingsItem(FVector2D((Canvas->ClipX * 0.5f) + 45.0f, 315.0f), FText::FromString(TEXT("[*] AYARLAR")), GEngine->GetMediumFont(), !bSoloSelected ? FLinearColor(0.35f, 1.0f, 0.55f) : FLinearColor::White);
-        SettingsItem.EnableShadow(FLinearColor::Black);
-        Canvas->DrawItem(SettingsItem);
-
-        FCanvasTextItem MenuHintItem(FVector2D((Canvas->ClipX * 0.5f) - 170.0f, 375.0f), FText::FromString(TEXT("SOL / SAG veya A / D - SEC     ENTER - ONAY")), GEngine->GetSmallFont(), FLinearColor::White);
+        FCanvasTextItem MenuHintItem(FVector2D((Canvas->ClipX * 0.5f) - 210.0f, 450.0f), FText::FromString(TEXT("A / D veya SOL / SAG: SEC     ENTER: ONAY")), GEngine->GetSmallFont(), FLinearColor::White);
         MenuHintItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(MenuHintItem);
+
+        FCanvasTextItem OnlineHintItem(FVector2D((Canvas->ClipX * 0.5f) - 210.0f, 475.0f), FText::FromString(TEXT("ONLINE SU AN AYNI AGDAKI (LAN) OYUNLARI BULUR")), GEngine->GetSmallFont(), FLinearColor(0.65f, 0.65f, 0.65f));
+        OnlineHintItem.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(OnlineHintItem);
         return;
     }
 
@@ -63,6 +119,13 @@ void AOverlaneHUD::DrawHUD()
         FCanvasTextItem HintItem(FVector2D((Canvas->ClipX * 0.5f) - 220.0f, 470.0f), FText::FromString(TEXT("YUKARI / ASAGI veya W / S: SEC   SOL / SAG veya A / D: DEGISTIR   ESC: GERI")), GEngine->GetSmallFont(), FLinearColor::White);
         HintItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(HintItem);
+        return;
+    }
+
+    // Everything past this point is in-race telemetry and genuinely needs a car.
+    const AOverlaneVehiclePawn* VehiclePawn = Cast<AOverlaneVehiclePawn>(GetOwningPlayerController() ? GetOwningPlayerController()->GetPawn() : nullptr);
+    if (!VehiclePawn)
+    {
         return;
     }
 

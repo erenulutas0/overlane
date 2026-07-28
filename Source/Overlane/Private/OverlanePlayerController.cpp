@@ -223,11 +223,15 @@ void AOverlanePlayerController::HandlePause(const FInputActionValue& Value)
 {
     if (AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr)
     {
-        if (GameMode->IsSettingsVisible())
+        if (GameMode->IsSessionBrowserVisible())
+        {
+            GameMode->CloseSessionBrowser();
+        }
+        else if (GameMode->IsSettingsVisible())
         {
             GameMode->CloseSettings();
         }
-        else if (!GameMode->IsMainMenuVisible())
+        else if (!GameMode->IsMainMenuVisible() && !GameMode->IsOnlineLobbyVisible())
         {
             GameMode->ToggleRacePause();
         }
@@ -254,7 +258,16 @@ void AOverlanePlayerController::HandleMenuUp(const FInputActionValue& Value)
 {
     if (AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr)
     {
-        GameMode->NavigateSettings(-1);
+        // The session browser is a vertical list, so up/down walks it. Everywhere
+        // else up/down still belongs to the settings rows.
+        if (GameMode->IsSessionBrowserVisible())
+        {
+            GameMode->NavigateMenu(-1);
+        }
+        else
+        {
+            GameMode->NavigateSettings(-1);
+        }
     }
 }
 
@@ -262,7 +275,14 @@ void AOverlanePlayerController::HandleMenuDown(const FInputActionValue& Value)
 {
     if (AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr)
     {
-        GameMode->NavigateSettings(1);
+        if (GameMode->IsSessionBrowserVisible())
+        {
+            GameMode->NavigateMenu(1);
+        }
+        else
+        {
+            GameMode->NavigateSettings(1);
+        }
     }
 }
 
@@ -300,7 +320,11 @@ void AOverlanePlayerController::HandleMenuBack(const FInputActionValue& Value)
 {
     if (AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr)
     {
-        if (GameMode->IsSettingsVisible())
+        if (GameMode->IsSessionBrowserVisible())
+        {
+            GameMode->CloseSessionBrowser();
+        }
+        else if (GameMode->IsSettingsVisible())
         {
             GameMode->CloseSettings();
         }
