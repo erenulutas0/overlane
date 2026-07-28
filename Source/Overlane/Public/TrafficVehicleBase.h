@@ -37,10 +37,32 @@ public:
 
     virtual void Tick(float DeltaSeconds) override;
     virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+    virtual void OnRep_ReplicatedMovement() override;
 
 private:
     bool MoveAlongTrafficPath(const FTransform& TargetTransform, float DistanceDelta);
     bool ShouldHoldForPlayer(const FVector& TargetLocation) const;
+
+    /**
+     * Client-side motion between snapshots.
+     *
+     * Without this a client's traffic sits wherever the last packet put it,
+     * roughly one-way-latency behind the server -- about 175 cm at 75 ms for a
+     * fast car. That error lands directly on the player's collision and near-miss
+     * geometry. Extrapolating from the replicated lane speed cuts it to the
+     * acceleration term only, which is centimetres.
+     */
+    void TickClientExtrapolation(float DeltaSeconds);
+
+    /**
+     * The server stops a traffic car dead when a player is inside a 540 x 310 uu
+     * box. The near-miss window is 300 uu wide, so that freeze happens during
+     * essentially every near miss -- and naive extrapolation would overshoot in
+     * the dangerous direction at exactly the scoring moment. This reproduces the
+     * test locally, for the local player only, which is the one case a client can
+     * evaluate identically to the server.
+     */
+    bool ShouldHoldForLocalPlayer() const;
 
     UFUNCTION()
     void HandleNearMissBegin(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
@@ -171,6 +193,20 @@ private:
 
     UPROPERTY(ReplicatedUsing = OnRep_TrafficVisualState)
     FName ReplicatedTrafficVariantName = TEXT("Commuter");
+
+    /**
+     * Lane speed in cm/s. Replicated rather than inferred from two position
+     * samples because it already encodes both the ShouldHoldForPlayer freeze and
+     * the FInterpTo acceleration, which position differencing cannot see.
+     */
+    UPROPERTY(Replicated)
+    int16 ReplicatedLaneSpeed = 0;
+
+    /** Seconds since the last snapshot; extrapolation stops when it runs out. */
+    float ClientExtrapolationElapsed = 0.0f;
+
+    /** Decaying visual error so a new snapshot never pops the car backwards. */
+    FVector ClientSmoothingOffset = FVector::ZeroVector;
 
     FName TrafficVariantName = TEXT("Commuter");
     bool bUsesTemplateSportsCar = false;

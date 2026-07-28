@@ -301,8 +301,17 @@ void ATrafficVehicleBase::ApplyTrafficVisualState()
 {
     TrafficColor = ReplicatedTrafficColor;
     TrafficVariantName = ReplicatedTrafficVariantName;
-    Collision->SetBoxExtent(ReplicatedCollisionExtent);
+
+    // A client's pose for this car is a guess, so bias its collision box slightly
+    // narrow. A marginal graze then becomes a late server collision rather than a
+    // ghost collision the client felt and the server never agreed to.
+    const FVector ClientInset = HasAuthority() ? FVector::ZeroVector : FVector(0.0f, 12.0f, 0.0f);
+    Collision->SetBoxExtent(ReplicatedCollisionExtent - ClientInset);
     NearMissTrigger->SetBoxExtent(ReplicatedCollisionExtent + FVector(150.0f, 245.0f, 55.0f));
+
+    // Near-miss scoring is server-only. Leaving the trigger live on clients just
+    // generates overlap traffic that nothing reads.
+    NearMissTrigger->SetGenerateOverlapEvents(HasAuthority());
 
     ConfigureTrafficVisualAssetForVariant();
 
@@ -615,14 +624,102 @@ bool ATrafficVehicleBase::ShouldHoldForPlayer(const FVector& TargetLocation) con
     return false;
 }
 
+namespace
+{
+    /** Stop guessing after this long without a snapshot. */
+    constexpr float OverlaneMaxTrafficExtrapolationSeconds = 0.25f;
+
+    /** How fast a post-snapshot visual error is bled off, per second. */
+    constexpr float OverlaneTrafficSmoothingRate = 8.0f;
+
+    static TAutoConsoleVariable<int32> CVarExtrapolateTraffic(
+        TEXT("overlane.Net.ExtrapolateTraffic"),
+        1,
+        TEXT("1: clients extrapolate traffic between snapshots. 0: snapshot poses only."),
+        ECVF_Default);
+}
+
+void ATrafficVehicleBase::OnRep_ReplicatedMovement()
+{
+    const FVector PreExtrapolatedLocation = GetActorLocation();
+
+    Super::OnRep_ReplicatedMovement();
+
+    // Whatever we had guessed ahead of the server becomes a decaying visual
+    // offset, re-applied immediately so the car does not visibly snap backwards
+    // every time a packet lands. Clamped so a genuine teleport still reads as one.
+    FVector Error = PreExtrapolatedLocation - GetActorLocation();
+    Error.Z = 0.0f;
+    ClientSmoothingOffset = Error.GetClampedToMaxSize(400.0f);
+    ClientExtrapolationElapsed = 0.0f;
+
+    if (!ClientSmoothingOffset.IsNearlyZero())
+    {
+        AddActorWorldOffset(ClientSmoothingOffset, false, nullptr, ETeleportType::TeleportPhysics);
+    }
+}
+
+bool ATrafficVehicleBase::ShouldHoldForLocalPlayer() const
+{
+    const UWorld* World = GetWorld();
+    const APlayerController* LocalController = World ? World->GetFirstPlayerController() : nullptr;
+    const AOverlaneVehiclePawn* LocalVehicle = LocalController ? Cast<AOverlaneVehiclePawn>(LocalController->GetPawn()) : nullptr;
+    if (!LocalVehicle)
+    {
+        return false;
+    }
+
+    // Same clearances the server uses in ShouldHoldForPlayer.
+    const FVector Location = GetActorLocation();
+    const FVector PlayerLocation = LocalVehicle->GetActorLocation();
+    return FMath::Abs(Location.X - PlayerLocation.X) < 540.0f
+        && FMath::Abs(Location.Y - PlayerLocation.Y) < 310.0f;
+}
+
+void ATrafficVehicleBase::TickClientExtrapolation(float DeltaSeconds)
+{
+    if (!bTrafficActive || CVarExtrapolateTraffic.GetValueOnGameThread() == 0)
+    {
+        return;
+    }
+
+    // Bleed off the post-snapshot error first, so extrapolation always builds on
+    // the corrected pose rather than compounding an old guess.
+    if (!ClientSmoothingOffset.IsNearlyZero())
+    {
+        const FVector Step = ClientSmoothingOffset * FMath::Clamp(DeltaSeconds * OverlaneTrafficSmoothingRate, 0.0f, 1.0f);
+        AddActorWorldOffset(-Step, false, nullptr, ETeleportType::TeleportPhysics);
+        ClientSmoothingOffset -= Step;
+    }
+
+    if (ClientExtrapolationElapsed >= OverlaneMaxTrafficExtrapolationSeconds)
+    {
+        // The snapshot is stale enough that guessing is worse than standing still.
+        return;
+    }
+
+    ClientExtrapolationElapsed += DeltaSeconds;
+
+    const float Speed = ShouldHoldForLocalPlayer() ? 0.0f : static_cast<float>(ReplicatedLaneSpeed);
+    if (FMath::IsNearlyZero(Speed))
+    {
+        return;
+    }
+
+    AddActorWorldOffset(GetActorForwardVector() * Speed * DeltaSeconds, false, nullptr, ETeleportType::TeleportPhysics);
+}
+
 void ATrafficVehicleBase::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
-    // The listen server owns all path simulation. Clients render the replicated
-    // traffic state and transforms only, so every player sees the same cars.
+    // The listen server owns all path simulation. Clients never re-run the lane
+    // logic -- ShouldHoldForPlayer iterates player controllers, and a client only
+    // sees itself, so identical code would give a permanently different answer.
+    // They extrapolate the replicated pose instead.
     if (!HasAuthority())
     {
+        TickClientExtrapolation(DeltaSeconds);
         return;
     }
 
@@ -640,6 +737,7 @@ void ATrafficVehicleBase::Tick(float DeltaSeconds)
     const float TargetSpeed = FMath::Min(DesiredSpeed, TrafficSpeedLimit);
     const float ResponseSpeed = CurrentSpeed > TargetSpeed ? 12.0f : 2.5f;
     CurrentSpeed = FMath::FInterpTo(CurrentSpeed, TargetSpeed, DeltaSeconds, ResponseSpeed);
+    ReplicatedLaneSpeed = static_cast<int16>(FMath::Clamp(CurrentSpeed, -32000.0f, 32000.0f));
     const float DistanceDelta = CurrentSpeed * DeltaSeconds;
     LaneDistance += DistanceDelta;
     if (LaneDistance >= AssignedLane->GetLaneLength())
@@ -684,4 +782,5 @@ void ATrafficVehicleBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
     DOREPLIFETIME(ATrafficVehicleBase, ReplicatedMeshScale);
     DOREPLIFETIME(ATrafficVehicleBase, ReplicatedCollisionExtent);
     DOREPLIFETIME(ATrafficVehicleBase, ReplicatedTrafficVariantName);
+    DOREPLIFETIME(ATrafficVehicleBase, ReplicatedLaneSpeed);
 }

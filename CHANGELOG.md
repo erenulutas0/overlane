@@ -354,3 +354,36 @@ and sample the cache directly, so single-player is unchanged.
 
 `OverlaneEditor Win64 Development` compiles clean. N-002 needs the two-client packet
 loss test before it can be called done.
+
+# 2026-07-28 - Netcode N-003: client-side traffic extrapolation
+
+A client's traffic sat wherever the last packet put it, roughly one-way latency behind
+the server - about 175 cm at 75 ms for a fast car. That error landed directly on the
+player's collision and near-miss geometry, so the client could see a gap the server did
+not agree existed.
+
+- `ATrafficVehicleBase` replicates `int16 ReplicatedLaneSpeed`, and clients extrapolate
+  along it between snapshots. The speed is replicated rather than inferred from two
+  position samples because it already encodes both the `ShouldHoldForPlayer` freeze and
+  the `FInterpTo` acceleration, neither of which position differencing can see. The
+  remaining error is the acceleration term only - centimetres.
+- Clients never re-run the lane logic. `ShouldHoldForPlayer` iterates player controllers,
+  and a client sees only itself, so identical code would give a permanently different
+  answer.
+- One deliberate exception: the server stops a traffic car dead inside a 540 x 310 uu box
+  around a player, and the near-miss window is 300 uu wide - so that freeze happens during
+  essentially every near miss. Naive extrapolation would slide the car forward and show
+  the client a gap that is not there, at exactly the scoring moment. The hold test is
+  reproduced locally for the local player only, which is the one case a client can
+  evaluate the same way the server does.
+- Mispredictions are biased toward false negatives: the client-side collision box is inset
+  12 uu laterally, so a marginal graze becomes a late server collision rather than a ghost
+  collision the client felt and the server never agreed to.
+- `NearMissTrigger` overlap events are disabled on clients; scoring is server-only.
+- A new snapshot no longer pops the car backwards - the extrapolated error becomes a
+  decaying visual offset. Extrapolation stops after 250 ms without a snapshot, past which
+  guessing is worse than standing still.
+- Toggle with `overlane.Net.ExtrapolateTraffic`.
+
+`OverlaneEditor Win64 Development` compiles clean. Single-player is untouched: the
+authority path is unchanged.
