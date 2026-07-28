@@ -254,3 +254,52 @@ its ceiling was 180 km/h against the player's 244.8 km/h; the outcome was decide
 
 `OverlaneEditor Win64 Development` compiles clean. **Runtime validation is pending** - none
 of the new driving behaviour has been observed in play yet.
+
+# 2026-07-28 - Rival control loop, corrected after adversarial review
+
+An independent frame-accurate review of the previous commit refuted two of its
+three steering fixes and found that one of them made the reported wall strike
+roughly twice as bad. Corrections:
+
+- **The wall strike was a bug introduced by the lane-change work, not derivative
+  kick.** On the frame a merge completed, `TrackedLaneDistance` was set to -1 to
+  "re-seed against the new spline" - but `UpdateTrackedLaneDistance` had already
+  run that tick and the steering block consumes the value later in the SAME tick.
+  The aim point therefore landed about 1.5 km behind the car, `bSpunAround` fired,
+  and full lock was applied toward the side the car was already overshooting.
+  It now re-projects onto the new lane in place, keeping the step clamp.
+- **Reverted the shorter merge look-ahead.** Halving it halves the pursuit time
+  constant: measured damping ratio fell from 0.42 to 0.19 and lane-width overshoot
+  rose from 24% to 55%. It made the symptom it was meant to fix worse.
+- **Reverted the sign-crossing completion test.** It was unreachable: crossing the
+  tolerance band inside one frame needs a lateral rate ~2.9x the car's speed.
+  Replaced with the correct version - a merge completes only when the lateral
+  offset AND the heading offset are both small, so the car cannot be declared
+  merged while still carrying outward yaw with nothing to shed it.
+- **The steering damping term was anti-damping.** `-Kd * d(HeadingError)/dt`
+  contains `+Kd * yaw_rate`, i.e. positive yaw-rate feedback. Measured damping
+  ratio is 0.489 at Kd = 0 versus 0.415 at Kd = 0.28. Default is now 0, with a
+  note that real damping must come from measured yaw rate.
+- **Spin recovery no longer bypasses the slew limiter.** It assigned the steering
+  command directly, putting a 2.0-wide step into yaw rate that took ~290 ms to
+  unwind. All paths now feed one limiter.
+
+The "changes lane very slowly" half of the report had a separate, structural cause:
+
+- **Lane-change clearance was absolute-speed based.** It demanded
+  `max(3200, BotSpeed * 1.6)` ahead - 80 m at cruise - while the traffic director
+  packs each lane into platoons spaced at its own 32 m following distance. The
+  window was structurally never available. Clearance is now derived from RELATIVE
+  speed via the same braking-distance law used for following, so a merge is legal
+  exactly when it is physically safe.
+- **The overtake benefit test compared raw gaps.** Both the current and candidate
+  gap are pinned to the same platoon spacing, so the "candidate must beat mine by
+  15 m" test almost never passed. It now compares the speed each lane would
+  actually allow, which is the quantity the decision is really about.
+- `ComfortDeceleration` lowered from 2600 to 1600 cm/s^2. The brake command has a
+  0.20 floor, making the achievable deceleration set {550 coast} union [1440, 7200],
+  so 1440 is a hard lower bound. At 1600 the blocked flag trips 36 m back = 0.72 s
+  of warning at 180 km/h, comfortably above the 0.6 s the overtake needs to arm;
+  at 2600 it tripped at 0.53 s and the overtake could never arm at cruising speed.
+
+`OverlaneEditor Win64 Development` compiles clean. Runtime validation pending.

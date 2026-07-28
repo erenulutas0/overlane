@@ -51,8 +51,14 @@ private:
 
     void RefreshTrafficCache(float DeltaSeconds);
     void UpdateTrackedLaneDistance(const AOverlaneVehiclePawn& Vehicle, float DeltaSeconds);
-    void ConsiderOvertake(const AOverlaneVehiclePawn& Vehicle, float CurrentGap, float BotSpeed);
+    void ConsiderOvertake(const AOverlaneVehiclePawn& Vehicle, float CurrentSpeedPotential, float CruiseSpeed, float BotSpeed);
     bool IsLaneChangeSafeForBot(const ATrafficLanePath* CandidateLane, const AOverlaneVehiclePawn& Vehicle, float BotSpeed) const;
+
+    /** The shared safe-following speed law, so every caller uses one curve. */
+    float ComputeFollowSpeed(float Gap, float LeaderSpeed, float CruiseSpeed) const;
+
+    /** The speed this lane would actually allow right now. */
+    float ComputeLaneSpeedPotential(const ATrafficLanePath* Lane, float CruiseSpeed) const;
     float ComputeRubberBandScale(const AOverlaneVehiclePawn& Vehicle) const;
 
     static constexpr float BigDistance = 1.0e9f;
@@ -82,8 +88,8 @@ private:
      * disengages -> full throttle, cycling forever. The law below is continuous
      * and monotonic in gap, so it has no threshold to cross.
      */
-    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "100.0"))
-    float ComfortDeceleration = 2600.0f;
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1440.0"))
+    float ComfortDeceleration = 1600.0f;
 
     /** Bot half-length plus the largest traffic half-length, rounded up. */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "0.0"))
@@ -105,29 +111,41 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.0"))
     float SteeringProportionalGain = 1.9f;
 
+    /**
+     * Defaults to zero, deliberately.
+     *
+     * The obvious "damping" term -Kd * d(HeadingError)/dt is ANTI-damping here:
+     * HeadingError contains the vehicle's own heading, so differentiating it
+     * feeds the yaw rate back with a positive sign. Measured closed-loop damping
+     * ratio is 0.489 at Kd = 0 and 0.415 at Kd = 0.28, i.e. the term made the
+     * merge overshoot worse (141 uu instead of 100 uu of lane-width overshoot).
+     * If real damping is ever wanted it must be taken from measured yaw rate,
+     * not from the error derivative, and the proportional gain re-tuned with it.
+     */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.0"))
-    float SteeringDampingGain = 0.28f;
+    float SteeringDampingGain = 0.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.1"))
     float SteeringSlewRate = 4.0f;
 
-    /**
-     * A merge needs a nearer aim point than lane-holding does, or the lateral
-     * error is spread over so much look-ahead that the command stays tiny and
-     * the car drifts across sideways instead of committing.
-     */
-    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.1", ClampMax = "1.0"))
-    float MergeLookAheadScale = 0.5f;
-
+    /** A merge is only complete once the outward yaw is shed, not just the offset. */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Steering", meta = (ClampMin = "0.1"))
-    float MergeSteeringSlewRate = 6.5f;
+    float LaneCompleteHeadingToleranceDegrees = 3.5f;
 
     // --- Overtaking ----------------------------------------------------------
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float BlockedTimeToOvertake = 0.6f;
 
+    /**
+     * How much faster the candidate lane must let the bot go, in cm/s.
+     *
+     * This replaced a raw-gap margin. Gap is the wrong currency: the traffic
+     * director packs each lane into platoons spaced at its own following
+     * distance, so "candidate gap must beat my gap by 15 m" was comparing two
+     * numbers that are both pinned to that spacing, and essentially never passed.
+     */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
-    float OvertakeGainMargin = 1500.0f;
+    float OvertakeSpeedGain = 450.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float LaneChangeEndBuffer = 2000.0f;
@@ -172,8 +190,6 @@ private:
     float TrafficCacheRemaining = 0.0f;
     float RivalContactCooldown = 0.0f;
     float LastGapToBlocker = BigDistance;
-    /** Sign of the lateral offset when the current merge began, 0 when not merging. */
-    float MergeStartOffsetSign = 0.0f;
     int32 CurrentLaneIndex = INDEX_NONE;
     int32 TargetLaneIndex = INDEX_NONE;
     int32 SteeringTargetLaneIndex = INDEX_NONE;

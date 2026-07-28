@@ -171,11 +171,15 @@ bool AOverlaneBotDriverController::IsLaneChangeSafeForBot(
         return false;
     }
 
-    // Asymmetric: an overtaking car needs far more room ahead than behind, and
-    // both windows scale with how fast it is actually travelling.
-    const float AheadClearance = FMath::Max(3200.0f, BotSpeed * 1.6f);
-    const float BehindClearance = 900.0f;
-
+    // Clearance scales with RELATIVE speed, not absolute speed.
+    //
+    // The previous version demanded max(3200, BotSpeed * 1.6) ahead, which is
+    // 80 m at cruise. Traffic flows in platoons spaced at the director's own
+    // following distance of ~32 m, so that window was structurally never
+    // available and the bot could effectively never merge -- which is what the
+    // "changes lane very slowly" report actually was. What matters is only
+    // whether it would rear-end the car ahead, or be rear-ended by the car
+    // behind, and both depend on the speed difference alone.
     for (const ATrafficVehicleBase* Other : CachedTraffic)
     {
         if (!Other || !Other->IsTrafficActive() || !Other->IsOccupyingLane(CandidateLane))
@@ -184,9 +188,29 @@ bool AOverlaneBotDriverController::IsLaneChangeSafeForBot(
         }
 
         const float RelativeDistance = Other->GetLaneDistance() - TrackedLaneDistance;
-        if (RelativeDistance > -BehindClearance && RelativeDistance < AheadClearance)
+        const float OtherSpeed = Other->GetCurrentSpeed();
+
+        if (RelativeDistance >= 0.0f)
         {
-            return false;
+            const float Closing = FMath::Max(0.0f, BotSpeed - OtherSpeed);
+            const float Required = MinimumFollowingDistance + BumperAllowance
+                + ((Closing * Closing) / (2.0f * ComfortDeceleration));
+            if (RelativeDistance < Required)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            // Less room is needed behind: the car back there is the one with the
+            // brakes, and traffic already runs its own following law.
+            const float Closing = FMath::Max(0.0f, OtherSpeed - BotSpeed);
+            const float Required = (MinimumFollowingDistance * 0.5f) + BumperAllowance
+                + ((Closing * Closing) / (2.0f * ComfortDeceleration));
+            if (-RelativeDistance < Required)
+            {
+                return false;
+            }
         }
     }
 
@@ -210,7 +234,35 @@ bool AOverlaneBotDriverController::IsLaneChangeSafeForBot(
     return true;
 }
 
-void AOverlaneBotDriverController::ConsiderOvertake(const AOverlaneVehiclePawn& Vehicle, float CurrentGap, float BotSpeed)
+float AOverlaneBotDriverController::ComputeFollowSpeed(float Gap, float LeaderSpeed, float CruiseSpeed) const
+{
+    // Safe-following speed: what we can carry and still bleed down to the
+    // leader's speed before the buffer closes. Continuous and monotonic in Gap,
+    // so unlike a speed-scaled threshold there is no boundary to oscillate on.
+    const float ApproachGap = Gap - MinimumFollowingDistance;
+    if (ApproachGap <= 0.0f)
+    {
+        return LeaderSpeed * FMath::Clamp(Gap / FMath::Max(MinimumFollowingDistance, 1.0f), 0.0f, 1.0f);
+    }
+
+    if (Gap >= BigDistance)
+    {
+        return CruiseSpeed;
+    }
+
+    return FMath::Min(CruiseSpeed, LeaderSpeed + FMath::Sqrt(2.0f * ComfortDeceleration * ApproachGap));
+}
+
+float AOverlaneBotDriverController::ComputeLaneSpeedPotential(const ATrafficLanePath* Lane, float CruiseSpeed) const
+{
+    float Gap = BigDistance;
+    float LeaderSpeed = 0.0f;
+    FindNearestBlocker(Lane, TrackedLaneDistance, Gap, LeaderSpeed);
+    return ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
+}
+
+void AOverlaneBotDriverController::ConsiderOvertake(
+    const AOverlaneVehiclePawn& Vehicle, float CurrentSpeedPotential, float CruiseSpeed, float BotSpeed)
 {
     if (TargetLaneIndex != CurrentLaneIndex || LaneChangeCooldown > 0.0f)
     {
@@ -228,8 +280,9 @@ void AOverlaneBotDriverController::ConsiderOvertake(const AOverlaneVehiclePawn& 
         return;
     }
 
+    // Score lanes by the speed they would actually allow, not by raw gap.
     int32 BestIndex = INDEX_NONE;
-    float BestScore = CurrentGap + OvertakeGainMargin;
+    float BestScore = CurrentSpeedPotential + OvertakeSpeedGain;
 
     for (const int32 Offset : { -1, 1 })
     {
@@ -240,13 +293,11 @@ void AOverlaneBotDriverController::ConsiderOvertake(const AOverlaneVehiclePawn& 
         }
 
         ATrafficLanePath* CandidateLane = Lanes[CandidateIndex].Get();
-        float CandidateGap = BigDistance;
-        float CandidateLeaderSpeed = 0.0f;
-        FindNearestBlocker(CandidateLane, TrackedLaneDistance, CandidateGap, CandidateLeaderSpeed);
+        const float CandidateSpeed = ComputeLaneSpeedPotential(CandidateLane, CruiseSpeed);
 
-        if (CandidateGap > BestScore && IsLaneChangeSafeForBot(CandidateLane, Vehicle, BotSpeed))
+        if (CandidateSpeed > BestScore && IsLaneChangeSafeForBot(CandidateLane, Vehicle, BotSpeed))
         {
-            BestScore = CandidateGap;
+            BestScore = CandidateSpeed;
             BestIndex = CandidateIndex;
         }
     }
@@ -255,14 +306,6 @@ void AOverlaneBotDriverController::ConsiderOvertake(const AOverlaneVehiclePawn& 
     {
         TargetLaneIndex = BestIndex;
         LaneChangeElapsed = 0.0f;
-
-        // Which side of the car the target lane started on, so the merge can end
-        // the instant the car crosses that lane's centre.
-        const ATrafficLanePath* NewTargetLane = Lanes[BestIndex].Get();
-        const float SignedOffset = NewTargetLane
-            ? NewTargetLane->GetTransformAtDistance(TrackedLaneDistance).GetLocation().Y - Vehicle.GetActorLocation().Y
-            : 0.0f;
-        MergeStartOffsetSign = FMath::Sign(SignedOffset);
     }
 }
 
@@ -343,28 +386,36 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     {
         LaneChangeElapsed += DeltaSeconds;
 
-        const FVector TargetLaneLocation = SteerLane->GetTransformAtDistance(TrackedLaneDistance).GetLocation();
-        const float SignedOffset = TargetLaneLocation.Y - Vehicle->GetActorLocation().Y;
-        const float LateralOffset = FMath::Abs(SignedOffset);
+        const FTransform TargetLaneTransform = SteerLane->GetTransformAtDistance(TrackedLaneDistance);
+        const float LateralOffset = FMath::Abs(TargetLaneTransform.GetLocation().Y - Vehicle->GetActorLocation().Y);
 
-        // Finish on arrival OR the moment the car crosses the target lane centre.
-        // Waiting only for the tolerance window let a fast merge sail straight
-        // through it and keep steering outward, into the barrier.
-        const bool bCrossedCentre = MergeStartOffsetSign != 0.0f && FMath::Sign(SignedOffset) != MergeStartOffsetSign;
+        // Position alone is not enough: the car reaches the tolerance band still
+        // carrying outward yaw, and nothing sheds it, which is where most of the
+        // residual overshoot into the barrier came from. Require the heading to
+        // be lined up with the lane as well.
+        const float HeadingOffsetDegrees = FMath::Abs(FMath::FindDeltaAngleDegrees(
+            Vehicle->GetActorRotation().Yaw, TargetLaneTransform.Rotator().Yaw));
 
-        if (LateralOffset < LaneCompleteTolerance || bCrossedCentre)
+        if (LateralOffset < LaneCompleteTolerance && HeadingOffsetDegrees < LaneCompleteHeadingToleranceDegrees)
         {
             CurrentLaneIndex = TargetLaneIndex;
             LanePath = Lanes[CurrentLaneIndex];
-            TrackedLaneDistance = -1.0f;   // re-seed against the new spline
-            MergeStartOffsetSign = 0.0f;
-            LaneChangeCooldown = 2.0f;
+
+            // Re-project onto the new spline NOW rather than invalidating with
+            // -1. UpdateTrackedLaneDistance has already run this tick and the
+            // steering block below consumes this value, so a -1 put the aim point
+            // ~1.5 km behind the car, tripped the spun-around branch and slammed
+            // full lock toward the side the car was already overshooting. The
+            // step clamp is kept so a spline projection glitch cannot teleport it.
+            const float ReseedDistance = Lanes[CurrentLaneIndex]->GetClosestDistanceToLocation(Vehicle->GetActorLocation());
+            TrackedLaneDistance = FMath::Clamp(ReseedDistance, TrackedLaneDistance - 400.0f, TrackedLaneDistance + 400.0f);
+
+            LaneChangeCooldown =2.0f;
         }
         else if (LaneChangeElapsed > LaneChangeTimeout)
         {
             TargetLaneIndex = CurrentLaneIndex;
-            MergeStartOffsetSign = 0.0f;
-            LaneChangeCooldown = 1.5f;
+            LaneChangeCooldown =1.5f;
         }
     }
 
@@ -395,41 +446,22 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     // cruise target here uses the same scaled number the handling will allow.
     const float CruiseSpeed = 5000.0f * RubberBandedScale;
 
-    // Safe-following speed: the speed we can carry and still bleed the difference
-    // down to the leader's before the buffer closes. It is continuous and
-    // monotonic in Gap, so unlike a speed-scaled threshold there is no boundary
-    // to oscillate across.
-    float DesiredSpeed = CruiseSpeed;
-    const float ApproachGap = Gap - MinimumFollowingDistance;
-    if (ApproachGap <= 0.0f)
-    {
-        // Inside the buffer: fall below the leader, reaching a stop at zero gap.
-        DesiredSpeed = LeaderSpeed * FMath::Clamp(Gap / FMath::Max(MinimumFollowingDistance, 1.0f), 0.0f, 1.0f);
-    }
-    else if (Gap < BigDistance)
-    {
-        DesiredSpeed = FMath::Min(DesiredSpeed, LeaderSpeed + FMath::Sqrt(2.0f * ComfortDeceleration * ApproachGap));
-    }
+    const float DesiredSpeed = ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
 
     bBlockedAhead = DesiredSpeed < CruiseSpeed * 0.9f;
     BlockedSeconds = bBlockedAhead ? BlockedSeconds + DeltaSeconds : 0.0f;
 
-    ConsiderOvertake(*Vehicle, Gap, BotSpeed);
+    ConsiderOvertake(*Vehicle, DesiredSpeed, CruiseSpeed, BotSpeed);
 
     // ---- Steering ------------------------------------------------------------
     // Yaw authority falls from 105 deg/s toward 33.6 deg/s as speed rises, so a
     // fixed look-ahead puts the target inside the achievable turn radius and the
     // controller weaves. Scale it with speed and damp the error rate.
-    const bool bMerging = TargetLaneIndex != CurrentLaneIndex;
-
-    float LookAhead = FMath::Clamp(LookAheadTimeSeconds * FMath::Abs(BotSpeed), MinLookAheadDistance, MaxLookAheadDistance);
-    if (bMerging)
-    {
-        // Aim nearer while merging, or 600 uu of lateral error spread over 27 m
-        // of look-ahead is a 1.3 degree heading error and the car barely turns.
-        LookAhead = FMath::Clamp(LookAhead * MergeLookAheadScale, 600.0f, 1600.0f);
-    }
-
+    // A shorter aim point while merging was tried and reverted: halving the
+    // look-ahead halves the pursuit time constant and drops the damping ratio
+    // from 0.42 to 0.19, which more than doubled the overshoot into the barrier.
+    // The look-ahead stays speed-scaled and continuous through the whole merge.
+    const float LookAhead = FMath::Clamp(LookAheadTimeSeconds * FMath::Abs(BotSpeed), MinLookAheadDistance, MaxLookAheadDistance);
     const float TargetDistance = FMath::Min(TrackedLaneDistance + LookAhead, SteerLane->GetLaneLength());
     const FVector TargetLocation = SteerLane->GetTransformAtDistance(TargetDistance).GetLocation();
     const FVector LocalTarget = Vehicle->GetActorTransform().InverseTransformPositionNoScale(TargetLocation);
@@ -438,10 +470,17 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     float Brake = 0.0f;
     const bool bSpunAround = LocalTarget.X < 0.0f;
 
+    // Every path below writes RawSteering and then goes through the SAME slew
+    // limiter. The spin-recovery branch used to assign SmoothedSteering directly,
+    // which put a 2.0-wide step into yaw RATE in one frame and took ~290 ms to
+    // unwind -- a standing hazard any time a transient made the aim point land
+    // behind the car.
+    float RawSteering = 0.0f;
+
     if (bSpunAround)
     {
         // Facing backwards. Steering authority is best at rest, so stop first.
-        SmoothedSteering = LocalTarget.Y >= 0.0f ? 1.0f : -1.0f;
+        RawSteering = LocalTarget.Y >= 0.0f ? 1.0f : -1.0f;
         if (BotSpeed > 200.0f)
         {
             Brake = 1.0f;
@@ -456,11 +495,9 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     {
         const float HeadingError = FMath::Atan2(LocalTarget.Y, FMath::Max(LocalTarget.X, 1.0f));
 
-        // Derivative kick: when the merge starts, the aim point jumps a whole
-        // lane sideways in one frame. The resulting error rate is enormous and
-        // the damping term briefly steers the WRONG WAY, which is what made the
-        // merge start hesitantly and then overshoot into the barrier. Suppress
-        // the derivative for the frame the aim point moves to another lane.
+        // The aim point steps a full lane sideways when a merge starts, so the
+        // error derivative spikes. Suppressing it that frame is cheap insurance,
+        // though with SteeringDampingGain at 0 it is currently inert.
         const bool bSteeringTargetJumped = SteeringTargetLaneIndex != TargetLaneIndex;
         SteeringTargetLaneIndex = TargetLaneIndex;
         if (bSteeringTargetJumped)
@@ -471,16 +508,21 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
         const float ErrorRate = (HeadingError - PreviousHeadingError) / FMath::Max(DeltaSeconds, KINDA_SMALL_NUMBER);
         PreviousHeadingError = HeadingError;
 
-        const float RawSteering = (SteeringProportionalGain * HeadingError) - (SteeringDampingGain * ErrorRate);
+        RawSteering = (SteeringProportionalGain * HeadingError) - (SteeringDampingGain * ErrorRate);
+    }
 
-        // The pawn integrates the command into yaw, so a step in the command is a
-        // step in yaw RATE. Slew-limit the command, do not merely clamp it.
-        const float MaxDelta = (bMerging ? MergeSteeringSlewRate : SteeringSlewRate) * DeltaSeconds;
+    // The pawn integrates the command into yaw, so a step in the command is a
+    // step in yaw RATE. Slew-limit the command, do not merely clamp it.
+    {
+        const float MaxDelta = SteeringSlewRate * DeltaSeconds;
         SmoothedSteering = FMath::Clamp(
             FMath::Clamp(RawSteering, -1.0f, 1.0f),
             SmoothedSteering - MaxDelta,
             SmoothedSteering + MaxDelta);
+    }
 
+    if (!bSpunAround)
+    {
         // ---- Throttle and brake ---------------------------------------------
         // These are mutually exclusive in the handling component: any non-zero
         // throttle makes the brake branch unreachable.
