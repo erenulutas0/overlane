@@ -124,7 +124,11 @@ void ATrafficDirector::SpawnInitialPool()
 
         FActorSpawnParameters SpawnParameters;
         SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-        for (int32 SlotIndex = 0; SlotIndex < VehiclesPerLane; ++SlotIndex)
+        // The pool is sized for every racer it may have to supply, not just one:
+        // traffic is now shared between racers rather than anchored to whoever
+        // happens to be in front.
+        const int32 SlotsPerLane = GetSlotsPerLane();
+        for (int32 SlotIndex = 0; SlotIndex < SlotsPerLane; ++SlotIndex)
         {
             ATrafficVehicleBase* Vehicle = GetWorld()->SpawnActor<ATrafficVehicleBase>(
                 ATrafficVehicleBase::StaticClass(), Lane->GetTransformAtDistance(0.0f), SpawnParameters);
@@ -135,6 +139,8 @@ void ATrafficDirector::SpawnInitialPool()
                 VehiclePool.Add(Vehicle);
                 PoolSpawnDistances.Add(0.0f);
                 RespawnTimers.Add(0.0f);
+                PoolAnchorRacer.Add(0);
+                PoolSlotIndex.Add(SlotIndex % VehiclesPerLane);
                 RefreshSpawnDistance(VehiclePool.Num() - 1);
             }
         }
@@ -166,42 +172,62 @@ void ATrafficDirector::RefreshRacerCache(float DeltaSeconds)
     }
 }
 
-float ATrafficDirector::GetLeadRacerLaneDistance(const ATrafficLanePath* Lane) const
+float ATrafficDirector::GetRacerLaneDistance(int32 RacerIndex, const ATrafficLanePath* Lane) const
 {
-    if (!Lane)
+    if (!Lane || !CachedRacers.IsValidIndex(RacerIndex) || !CachedRacers[RacerIndex])
     {
         return 0.0f;
     }
 
-    float FurthestDistance = 0.0f;
-    for (const AOverlaneVehiclePawn* Racer : CachedRacers)
-    {
-        if (Racer)
-        {
-            FurthestDistance = FMath::Max(FurthestDistance, Lane->GetClosestDistanceToLocation(Racer->GetActorLocation()));
-        }
-    }
-
-    return FurthestDistance;
+    return Lane->GetClosestDistanceToLocation(CachedRacers[RacerIndex]->GetActorLocation());
 }
 
-float ATrafficDirector::GetTrailingRacerLaneDistance(const ATrafficLanePath* Lane) const
+int32 ATrafficDirector::PickAnchorRacerForSpawn(const ATrafficLanePath* Lane) const
 {
-    if (!Lane)
+    if (CachedRacers.Num() <= 1 || !Lane)
     {
-        return 0.0f;
+        return 0;
     }
 
-    float NearestDistance = TNumericLimits<float>::Max();
-    for (const AOverlaneVehiclePawn* Racer : CachedRacers)
+    // The band a racer can actually see filling up ahead of it.
+    const float SupplyBand = InitialSpawnDistance + (VehiclesPerLane * TrafficSpacing);
+
+    int32 BestRacer = 0;
+    int32 BestCount = TNumericLimits<int32>::Max();
+
+    for (int32 RacerIndex = 0; RacerIndex < CachedRacers.Num(); ++RacerIndex)
     {
-        if (Racer)
+        if (!CachedRacers[RacerIndex])
         {
-            NearestDistance = FMath::Min(NearestDistance, Lane->GetClosestDistanceToLocation(Racer->GetActorLocation()));
+            continue;
+        }
+
+        const float RacerDistance = GetRacerLaneDistance(RacerIndex, Lane);
+
+        int32 SuppliedCount = 0;
+        for (int32 PoolIndex = 0; PoolIndex < VehiclePool.Num(); ++PoolIndex)
+        {
+            const ATrafficVehicleBase* Vehicle = VehiclePool[PoolIndex];
+            if (!Vehicle || !Vehicle->IsTrafficActive() || Lanes[PoolIndex] != Lane)
+            {
+                continue;
+            }
+
+            const float Relative = Vehicle->GetLaneDistance() - RacerDistance;
+            if (Relative > -RecycleBehindPlayerDistance && Relative < SupplyBand)
+            {
+                ++SuppliedCount;
+            }
+        }
+
+        if (SuppliedCount < BestCount)
+        {
+            BestCount = SuppliedCount;
+            BestRacer = RacerIndex;
         }
     }
 
-    return NearestDistance == TNumericLimits<float>::Max() ? 0.0f : NearestDistance;
+    return BestRacer;
 }
 
 void ATrafficDirector::RefreshSpawnDistance(int32 VehicleIndex)
@@ -217,10 +243,20 @@ void ATrafficDirector::RefreshSpawnDistance(int32 VehicleIndex)
         return;
     }
 
-    const int32 SlotIndex = VehicleIndex % VehiclesPerLane;
-    const int32 LaneIndex = VehicleIndex / VehiclesPerLane;
-    const float LaneStagger = (LaneIndex % 3) * (TrafficSpacing * 0.32f);
-    const float RequestedDistance = GetLeadRacerLaneDistance(Lane) + InitialSpawnDistance + (SlotIndex * TrafficSpacing) + LaneStagger;
+    // Choose which racer this slot supplies, and remember it: recycling has to
+    // use the SAME racer, or a car spawned for one racer would be judged stale
+    // against another and the pool would thrash.
+    const int32 AnchorRacer = PickAnchorRacerForSpawn(Lane);
+    if (PoolAnchorRacer.IsValidIndex(VehicleIndex))
+    {
+        PoolAnchorRacer[VehicleIndex] = AnchorRacer;
+    }
+
+    const int32 SlotIndex = PoolSlotIndex.IsValidIndex(VehicleIndex) ? PoolSlotIndex[VehicleIndex] : 0;
+    const int32 LaneIndex = AvailableLanes.IndexOfByKey(Lane);
+    const float LaneStagger = (FMath::Max(0, LaneIndex) % 3) * (TrafficSpacing * 0.32f);
+    const float RequestedDistance = GetRacerLaneDistance(AnchorRacer, Lane)
+        + InitialSpawnDistance + (SlotIndex * TrafficSpacing) + LaneStagger;
     PoolSpawnDistances[VehicleIndex] = FMath::Min(RequestedDistance, Lane->GetLaneLength() - 100.0f);
 }
 
@@ -235,7 +271,12 @@ void ATrafficDirector::RecycleVehiclesBehindPlayer()
             continue;
         }
 
-        if (Vehicle->GetLaneDistance() < GetTrailingRacerLaneDistance(Lane) - RecycleBehindPlayerDistance)
+        // Judged against the racer this car was spawned to supply, not against
+        // whoever happens to be furthest back. Anchoring recycling on the
+        // trailing racer meant that once a leader pulled away, nothing behind
+        // them ever aged out and nothing new ever spawned.
+        const int32 AnchorRacer = PoolAnchorRacer.IsValidIndex(Index) ? PoolAnchorRacer[Index] : 0;
+        if (Vehicle->GetLaneDistance() < GetRacerLaneDistance(AnchorRacer, Lane) - RecycleBehindPlayerDistance)
         {
             Vehicle->DeactivateForPool();
             RespawnTimers[Index] = RespawnDelaySeconds;
@@ -278,8 +319,8 @@ void ATrafficDirector::ActivateVehicle(int32 VehicleIndex)
         { FLinearColor(0.35f, 0.75f, 0.42f), 1050.0f, TEXT("Truck"), FVector(6.5f, 2.15f, 2.1f), FVector(325.0f, 108.0f, 105.0f) }
     };
 
-    const int32 SlotIndex = VehicleIndex % VehiclesPerLane;
-    const int32 LaneIndex = VehicleIndex / VehiclesPerLane;
+    const int32 SlotIndex = VehicleIndex % GetSlotsPerLane();
+    const int32 LaneIndex = VehicleIndex / GetSlotsPerLane();
     // Keep a single slow truck near the far end of the whole pool. Repeating trucks
     // in every lane made the early test road congest before lane changes could occur.
     // Offset the profile cycle per lane so even the short multiplayer pool gets
@@ -403,14 +444,14 @@ void ATrafficDirector::TryStartGuardedLaneChange()
     // observable before faster cars reach the end of the current test road.
     static const int32 SlotPriority[] = { 5, 3, 0, 6, 4, 1, 2 };
     const int32 PriorityIndex = LaneChangeAttemptCounter % UE_ARRAY_COUNT(SlotPriority);
-    const int32 RequestedSlot = SlotPriority[PriorityIndex] % VehiclesPerLane;
+    const int32 RequestedSlot = SlotPriority[PriorityIndex] % GetSlotsPerLane();
     const int32 FirstLaneIndex = (LaneChangeAttemptCounter / UE_ARRAY_COUNT(SlotPriority)) % AvailableLanes.Num();
     ++LaneChangeAttemptCounter;
 
     for (int32 LaneOffset = 0; LaneOffset < AvailableLanes.Num(); ++LaneOffset)
     {
         const int32 LaneIndex = (FirstLaneIndex + LaneOffset) % AvailableLanes.Num();
-        const int32 VehicleIndex = (LaneIndex * VehiclesPerLane) + RequestedSlot;
+        const int32 VehicleIndex = (LaneIndex * GetSlotsPerLane()) + RequestedSlot;
         if (!VehiclePool.IsValidIndex(VehicleIndex))
         {
             continue;

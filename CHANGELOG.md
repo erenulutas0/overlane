@@ -440,3 +440,37 @@ measurement itself is trustworthy before anything is enforced.
    server may never have agreed happened.
 
 `OverlaneEditor Win64 Development` compiles clean.
+
+# 2026-07-29 - Traffic is now maintained per racer, not per leader
+
+A measured solo run exposed a structural defect in the traffic director. Spawning was
+anchored to the FURTHEST racer (`TrafficDirector.cpp:223`) while recycling was judged
+against the NEAREST one (`:238`). With the player at 130 km/h, the rival at 58 km/h and
+traffic itself at ~54 km/h, the rival moved at almost exactly traffic speed - so no car
+ever fell the required 150 m behind it, nothing recycled, and therefore nothing respawned.
+
+The consequences were larger than a tuning problem:
+
+- The player cleared all 21 cars inside the first minute and then drove **five kilometres
+  of completely empty road**. The dense-traffic pillar simply stopped existing for most of
+  the race.
+- The rival was permanently trapped in the pack it could not clear, and by being there it
+  also pinned the whole pool in place. No amount of AI tuning could have fixed this: the
+  leader structurally sees sparse traffic and the follower structurally sees dense traffic.
+
+Measured before the fix: player 130 km/h average over 6 km, rival 58 km/h, rival 3331 m
+behind at the finish. The rival figure matches the 61 km/h the design analysis predicted
+for the dense case, confirming that model.
+
+Fix: every pool slot is now anchored to whichever racer currently has the least traffic
+ahead of it, and recycling is judged against that same racer, so density is maintained
+around each racer independently rather than around whoever happens to be in front. The
+pool is sized by a new `RacerSupplyCapacity` (default 2) because traffic is now shared -
+a race with a rival needs twice the pool of a time trial to feel the same density.
+
+Two other places mapped a pool index to a lane and a slot using `VehiclesPerLane`. The
+per-lane block grew, so both were silently reading the wrong index: traffic profile
+selection and traffic lane-change selection. Both now use `GetSlotsPerLane()`.
+
+`OverlaneEditor Win64 Development` compiles clean. **The 42-car pool needs a frame-rate
+check**; if it costs too much, drop `VehiclesPerLane` from 7 to 5 for a 30-car pool.

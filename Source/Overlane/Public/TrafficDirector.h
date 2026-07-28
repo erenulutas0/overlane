@@ -37,18 +37,30 @@ private:
     void RecycleVehiclesBehindPlayer();
     void RefreshRacerCache(float DeltaSeconds);
 
-    /**
-     * Furthest racer along the lane, humans and the AI rival alike. Drives the
-     * spawn window: anchoring on humans only let a rival 90 m ahead outrun the
-     * window entirely and drive on empty road.
-     */
-    float GetLeadRacerLaneDistance(const ATrafficLanePath* Lane) const;
+    float GetRacerLaneDistance(int32 RacerIndex, const ATrafficLanePath* Lane) const;
 
     /**
-     * Nearest racer along the lane. Drives recycling, which must use the
-     * trailing racer or it despawns cars the human behind still needs.
+     * Which racer this pool slot should supply next.
+     *
+     * Traffic used to spawn ahead of the FURTHEST racer and recycle behind the
+     * NEAREST one. With a leader running at 130 km/h and a trailing racer moving
+     * at traffic speed, nothing ever fell far enough behind to recycle, so
+     * nothing respawned: the leader punched through the pack in the first minute
+     * and drove the remaining five kilometres on a completely empty road, while
+     * the trailing racer stayed buried in a jam it could never clear.
+     *
+     * Each pool slot is now anchored to whichever racer currently has the least
+     * traffic in front of it, so density is maintained around every racer
+     * independently and neither position is privileged.
      */
-    float GetTrailingRacerLaneDistance(const ATrafficLanePath* Lane) const;
+    int32 PickAnchorRacerForSpawn(const ATrafficLanePath* Lane) const;
+
+    /**
+     * Pool entries per lane. Every place that maps a pool index to a lane or a
+     * slot must use this, not VehiclesPerLane: the pool block per lane grew when
+     * traffic started being shared between racers.
+     */
+    int32 GetSlotsPerLane() const { return VehiclesPerLane * FMath::Max(1, RacerSupplyCapacity); }
     bool IsSpawnSafeForPlayer(int32 VehicleIndex) const;
     bool IsSpawnSafeForTraffic(int32 VehicleIndex) const;
     void UpdateTrafficFollowing(float DeltaSeconds);
@@ -58,8 +70,17 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Traffic", meta = (ClampMin = "0.0"))
     float InitialSpawnDistance = 12000.0f;
 
+    /** Cars per lane, PER RACER. The pool is this times lanes times capacity. */
     UPROPERTY(EditDefaultsOnly, Category = "Traffic", meta = (ClampMin = "1", ClampMax = "12"))
     int32 VehiclesPerLane = 7;
+
+    /**
+     * How many racers the pool is sized to keep supplied at once. Traffic is
+     * shared between them, so a race with a rival needs twice the pool of a
+     * time trial to feel the same density.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Traffic", meta = (ClampMin = "1", ClampMax = "4"))
+    int32 RacerSupplyCapacity = 2;
 
     UPROPERTY(EditDefaultsOnly, Category = "Traffic", meta = (ClampMin = "0.0"))
     float TrafficSpacing = 3500.0f;
@@ -121,6 +142,12 @@ private:
     TArray<TObjectPtr<class AOverlaneVehiclePawn>> CachedRacers;
 
     float RacerCacheRemaining = 0.0f;
+
+    /** Index into CachedRacers that each pool slot is currently supplying. */
+    TArray<int32> PoolAnchorRacer;
+
+    /** Slot within its racer's supply, used for spacing along the lane. */
+    TArray<int32> PoolSlotIndex;
 
     TArray<float> PoolSpawnDistances;
     TArray<float> RespawnTimers;
