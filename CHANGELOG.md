@@ -474,3 +474,34 @@ selection and traffic lane-change selection. Both now use `GetSlotsPerLane()`.
 
 `OverlaneEditor Win64 Development` compiles clean. **The 42-car pool needs a frame-rate
 check**; if it costs too much, drop `VehiclesPerLane` from 7 to 5 for a 30-car pool.
+
+# 2026-07-29 - Stop painting over the cars PBR materials
+
+A rendering diagnosis found that the single largest contributor to the build's "plastic
+toy" look was not the models. It was this code.
+
+`ATrafficVehicleBase::ApplyTrafficVisualState` overwrote **every** material slot on the
+SportsCar mesh with a dynamic instance of `/Engine/BasicShapes/BasicShapeMaterial` - a
+material with no normal map, no roughness map, no metallic and no AO. Epic's authored
+`MI_SportsCarBody` ships with proper metallic/roughness/AO car paint, and the code threw
+all of it away to set one colour. `AOverlaneVehiclePawn::SetBodyColor` did the same.
+
+The proof was already running in the build: the player's car and the traffic cars use the
+bit-identical `SM_SportsCar` mesh, but `SetBodyColor` is only ever called for the AI rival,
+so the human's car kept its authored PBR while traffic was repainted flat. Same geometry,
+same lighting, side by side - and the player's car visibly read as more real. Geometry was
+held constant and appearance still differed, so appearance was never driven by geometry.
+
+Both paths now tint the mesh's **authored** materials instead of replacing them:
+
+- The material is asked whether it exposes a tint parameter, rather than assuming a name -
+  seven candidates are tried, because Epic's templates and third-party packs disagree.
+- Slots with no tint parameter (glass, tyres, trim) keep their authored material instead of
+  being painted body colour.
+- If nothing on the mesh is tintable, the old flat material is used as a fallback. Traffic
+  colour is gameplay-readable state that near-miss and collision feedback match against, so
+  it can never be silently lost in exchange for nicer shading.
+- Dynamic instances are always created from the static mesh asset, never from the
+  component, so a pooled car changing variant cannot nest instances inside each other.
+
+`OverlaneEditor Win64 Development` compiles clean.

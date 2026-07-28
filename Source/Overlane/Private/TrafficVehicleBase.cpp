@@ -297,6 +297,74 @@ void ATrafficVehicleBase::ApplyTrafficActiveState()
     SetActorEnableCollision(bTrafficActive);
 }
 
+namespace
+{
+    /**
+     * Candidate tint parameter names, in preference order. Different vendors and
+     * Epic's own templates disagree, so the material is asked rather than assumed.
+     */
+    static const FName OverlaneTintParameterNames[] =
+    {
+        FName(TEXT("Color")),
+        FName(TEXT("BaseColor")),
+        FName(TEXT("Base Color")),
+        FName(TEXT("PaintColor")),
+        FName(TEXT("Paint Color")),
+        FName(TEXT("BodyColor")),
+        FName(TEXT("Tint"))
+    };
+}
+
+bool ATrafficVehicleBase::ApplyTintedAuthoredMaterials(const FLinearColor& Tint)
+{
+    UStaticMesh* Mesh = VehicleMesh ? VehicleMesh->GetStaticMesh() : nullptr;
+    if (!Mesh)
+    {
+        return false;
+    }
+
+    bool bTintedAnySlot = false;
+
+    for (int32 MaterialIndex = 0; MaterialIndex < VehicleMesh->GetNumMaterials(); ++MaterialIndex)
+    {
+        // Source from the ASSET, never from the component: re-reading the
+        // component would nest a dynamic instance inside the previous one every
+        // time a pooled car changes variant.
+        UMaterialInterface* AuthoredMaterial = Mesh->GetMaterial(MaterialIndex);
+        if (!AuthoredMaterial)
+        {
+            continue;
+        }
+
+        FLinearColor ExistingValue;
+        const FName* MatchedParameter = nullptr;
+        for (const FName& Candidate : OverlaneTintParameterNames)
+        {
+            if (AuthoredMaterial->GetVectorParameterValue(Candidate, ExistingValue))
+            {
+                MatchedParameter = &Candidate;
+                break;
+            }
+        }
+
+        if (!MatchedParameter)
+        {
+            // Glass, tyres and trim usually have no tint parameter, and must keep
+            // their authored look rather than being painted body colour.
+            VehicleMesh->SetMaterial(MaterialIndex, AuthoredMaterial);
+            continue;
+        }
+
+        if (UMaterialInstanceDynamic* TintedMaterial = VehicleMesh->CreateDynamicMaterialInstance(MaterialIndex, AuthoredMaterial))
+        {
+            TintedMaterial->SetVectorParameterValue(*MatchedParameter, Tint);
+            bTintedAnySlot = true;
+        }
+    }
+
+    return bTintedAnySlot;
+}
+
 void ATrafficVehicleBase::ApplyTrafficVisualState()
 {
     TrafficColor = ReplicatedTrafficColor;
@@ -322,9 +390,13 @@ void ATrafficVehicleBase::ApplyTrafficVisualState()
 
     if (bUsingTemplateSportsCarVisual)
     {
-        for (int32 MaterialIndex = 0; MaterialIndex < VehicleMesh->GetNumMaterials(); ++MaterialIndex)
+        if (!ApplyTintedAuthoredMaterials(TrafficColor))
         {
-            VehicleMesh->SetMaterial(MaterialIndex, VehicleMaterial);
+            // No tintable parameter: keep colour coding, lose the PBR.
+            for (int32 MaterialIndex = 0; MaterialIndex < VehicleMesh->GetNumMaterials(); ++MaterialIndex)
+            {
+                VehicleMesh->SetMaterial(MaterialIndex, VehicleMaterial);
+            }
         }
         UpdateTemplateSportsCarVisualGeometry();
     }

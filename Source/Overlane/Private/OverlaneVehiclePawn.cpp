@@ -410,13 +410,65 @@ void AOverlaneVehiclePawn::SetBodyColor(const FLinearColor& InColor)
 
     VehicleBodyMaterial->SetVectorParameterValue(TEXT("Color"), InColor);
 
-    // The constructor only binds VehicleBodyMaterial to the mesh on the
-    // placeholder path; with the template sports car present the pawn renders
-    // the template's own materials, so setting the parameter alone does nothing.
-    // Assign the dynamic material to every slot, as the traffic vehicles do.
+    // Tint the authored materials rather than replacing them. Overwriting every
+    // slot with a dynamic instance of BasicShapeMaterial threw away the mesh's
+    // normal, roughness, metallic and AO maps, which is what made a repainted
+    // car read as flat plastic next to an unrepainted one of the same mesh.
+    UStaticMesh* Mesh = VehicleMesh->GetStaticMesh();
+    if (!Mesh)
+    {
+        return;
+    }
+
+    static const FName TintParameterNames[] =
+    {
+        FName(TEXT("Color")), FName(TEXT("BaseColor")), FName(TEXT("Base Color")),
+        FName(TEXT("PaintColor")), FName(TEXT("Paint Color")),
+        FName(TEXT("BodyColor")), FName(TEXT("Tint"))
+    };
+
+    bool bTintedAnySlot = false;
+
     for (int32 MaterialIndex = 0; MaterialIndex < VehicleMesh->GetNumMaterials(); ++MaterialIndex)
     {
-        VehicleMesh->SetMaterial(MaterialIndex, VehicleBodyMaterial);
+        UMaterialInterface* AuthoredMaterial = Mesh->GetMaterial(MaterialIndex);
+        if (!AuthoredMaterial)
+        {
+            continue;
+        }
+
+        FLinearColor ExistingValue;
+        const FName* MatchedParameter = nullptr;
+        for (const FName& Candidate : TintParameterNames)
+        {
+            if (AuthoredMaterial->GetVectorParameterValue(Candidate, ExistingValue))
+            {
+                MatchedParameter = &Candidate;
+                break;
+            }
+        }
+
+        if (!MatchedParameter)
+        {
+            VehicleMesh->SetMaterial(MaterialIndex, AuthoredMaterial);
+            continue;
+        }
+
+        if (UMaterialInstanceDynamic* TintedMaterial = VehicleMesh->CreateDynamicMaterialInstance(MaterialIndex, AuthoredMaterial))
+        {
+            TintedMaterial->SetVectorParameterValue(*MatchedParameter, InColor);
+            bTintedAnySlot = true;
+        }
+    }
+
+    if (!bTintedAnySlot)
+    {
+        // Nothing tintable: the rival must still be visually distinct, so fall
+        // back to the flat material rather than being indistinguishable.
+        for (int32 MaterialIndex = 0; MaterialIndex < VehicleMesh->GetNumMaterials(); ++MaterialIndex)
+        {
+            VehicleMesh->SetMaterial(MaterialIndex, VehicleBodyMaterial);
+        }
     }
 }
 

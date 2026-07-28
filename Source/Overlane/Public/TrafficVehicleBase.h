@@ -78,6 +78,21 @@ private:
 
     void ApplyTrafficActiveState();
     void ApplyTrafficVisualState();
+    /**
+     * Tint the mesh's AUTHORED materials instead of replacing them.
+     *
+     * The old code overwrote every slot with a dynamic instance of
+     * /Engine/BasicShapes/BasicShapeMaterial, which has no normal, roughness,
+     * metallic or AO map - so a correctly shaded PBR car was repainted as flat
+     * plastic. The player's own car was never repainted, which is why it visibly
+     * read as more real than the traffic around it despite being the same mesh.
+     *
+     * @return false if the authored material exposes no tint parameter, in which
+     *         case the caller must fall back to the flat coloured material:
+     *         traffic colour is gameplay-readable state, not decoration.
+     */
+    bool ApplyTintedAuthoredMaterials(const FLinearColor& Tint);
+
     void ConfigureTrafficVisualAssetForVariant();
     void UpdateStylizedVisualGeometry();
     void UpdateTemplateSportsCarVisualGeometry();
