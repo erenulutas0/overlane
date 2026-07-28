@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
+#include "OverlaneNetTypes.h"
 #include "OverlaneVehiclePawn.generated.h"
 
 class UArcadeHandlingComponent;
@@ -73,7 +74,7 @@ protected:
     void HandleVehicleHit(UPrimitiveComponent* HitComponent, AActor* OtherActor, UPrimitiveComponent* OtherComponent, FVector NormalImpulse, const FHitResult& Hit);
 
     UFUNCTION()
-    void OnRep_OwnerServerTransform();
+    void OnRep_ServerMoveAck();
 
 private:
     UPROPERTY(VisibleAnywhere, Category = "Vehicle")
@@ -174,8 +175,16 @@ private:
     UPROPERTY(Replicated)
     bool bReplicatedBoostActive = false;
 
-    UPROPERTY(ReplicatedUsing = OnRep_OwnerServerTransform)
-    FTransform OwnerServerTransform;
+    /**
+     * The server's authoritative answer to the owning client's input stream.
+     *
+     * Replaces a raw FTransform sent 60 times a second. Under LWC that transform
+     * was ten doubles, ~80 bytes per update; this is ~15 bytes at 30 Hz and
+     * carries strictly more - speed, boost charge, the collision event count and
+     * the driving-allowed gate - which is what reconciliation will need.
+     */
+    UPROPERTY(ReplicatedUsing = OnRep_ServerMoveAck)
+    FOverlaneMoveAck ServerMoveAck;
 
     FTransform RecoveryTransform;
 };

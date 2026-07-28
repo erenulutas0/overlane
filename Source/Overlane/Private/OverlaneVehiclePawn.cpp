@@ -33,7 +33,10 @@ AOverlaneVehiclePawn::AOverlaneVehiclePawn()
     PrimaryActorTick.bCanEverTick = true;
     bReplicates = true;
     SetReplicateMovement(true);
-    SetNetUpdateFrequency(60.0f);
+    // 30 Hz is enough now that the owner channel carries a compact ack rather
+    // than a full transform; reconciliation replays the gap rather than relying
+    // on snapshot density.
+    SetNetUpdateFrequency(30.0f);
     SetMinNetUpdateFrequency(30.0f);
 
     VehicleCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("VehicleCollision"));
@@ -237,7 +240,17 @@ void AOverlaneVehiclePawn::Tick(float DeltaSeconds)
         ReplicatedSpeedKph = ArcadeHandling->GetSpeedKph();
         ReplicatedBoostCharge = ArcadeHandling->GetBoostChargeRatio();
         bReplicatedBoostActive = ArcadeHandling->IsBoostActive();
-        OwnerServerTransform = GetActorTransform();
+
+        const FOverlaneVehicleSimState SimState = ArcadeHandling->GetSimState();
+        ServerMoveAck.Sequence = ArcadeHandling->GetLastConsumedSequence();
+        ServerMoveAck.Location = SimState.Location;
+        ServerMoveAck.YawQ = static_cast<uint16>(FMath::RoundToInt(FRotator::ClampAxis(SimState.Yaw) * (65536.0f / 360.0f))) & 0xFFFF;
+        ServerMoveAck.SpeedCms = static_cast<int16>(FMath::Clamp(SimState.CurrentSpeed, -32000.0f, 32000.0f));
+        ServerMoveAck.BoostChargeQ = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(SimState.BoostCharge, 0.0f, 1.0f) * 255.0f));
+        ServerMoveAck.CollisionEventCount = SimState.CollisionEventCount;
+        ServerMoveAck.Flags =
+            (SimState.bBoostActive ? 0x01 : 0x00) |
+            (ArcadeHandling->IsInputStarved() ? 0x04 : 0x00);
     }
 
     const float SpeedRatio = FMath::Clamp(GetSpeedKph() / 245.0f, 0.0f, 1.0f);
@@ -270,15 +283,28 @@ void AOverlaneVehiclePawn::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
     DOREPLIFETIME(AOverlaneVehiclePawn, ReplicatedSpeedKph);
     DOREPLIFETIME_CONDITION(AOverlaneVehiclePawn, ReplicatedBoostCharge, COND_OwnerOnly);
     DOREPLIFETIME_CONDITION(AOverlaneVehiclePawn, bReplicatedBoostActive, COND_OwnerOnly);
-    DOREPLIFETIME_CONDITION(AOverlaneVehiclePawn, OwnerServerTransform, COND_OwnerOnly);
+    DOREPLIFETIME_CONDITION(AOverlaneVehiclePawn, ServerMoveAck, COND_OwnerOnly);
 }
 
-void AOverlaneVehiclePawn::OnRep_OwnerServerTransform()
+void AOverlaneVehiclePawn::OnRep_ServerMoveAck()
 {
-    if (!HasAuthority())
+    if (HasAuthority())
     {
-        SetActorTransform(OwnerServerTransform, false, nullptr, ETeleportType::TeleportPhysics);
+        return;
     }
+
+    // Deliberately still a hard snap, exactly as the old transform channel was.
+    // This step only swaps the wire format, so a replication break can be told
+    // apart from a feel change. Replay and smoothing arrive in N-008.
+    FOverlaneVehicleSimState SimState;
+    SimState.Location = ServerMoveAck.Location;
+    SimState.Yaw = ServerMoveAck.YawQ * (360.0f / 65536.0f);
+    SimState.CurrentSpeed = static_cast<float>(ServerMoveAck.SpeedCms);
+    SimState.BoostCharge = ServerMoveAck.BoostChargeQ * (1.0f / 255.0f);
+    SimState.CollisionEventCount = ServerMoveAck.CollisionEventCount;
+    SimState.bBoostActive = (ServerMoveAck.Flags & 0x01) != 0;
+
+    ArcadeHandling->SetSimState(SimState);
 }
 
 void AOverlaneVehiclePawn::SetAIRacer(bool bInIsAIRacer)

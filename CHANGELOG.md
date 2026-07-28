@@ -387,3 +387,24 @@ not agree existed.
 
 `OverlaneEditor Win64 Development` compiles clean. Single-player is untouched: the
 authority path is unchanged.
+
+# 2026-07-28 - Netcode N-004: owner wire format
+
+Replaces the raw `OwnerServerTransform` channel with `FOverlaneMoveAck`.
+
+Under LWC the old channel sent an unquantised `FTransform` - ten doubles, about 80 bytes -
+at 60 Hz, roughly 4.8 KB/s per owner. The ack is about 15 bytes at 30 Hz, roughly 450 B/s,
+and carries strictly more: the last input sequence the server consumed, quantised position
+and yaw, exact speed, boost charge, the collision event count and the driving-allowed and
+input-starved flags. That is the channel reconciliation needs, and it is an order of
+magnitude cheaper on the one channel that most needs headroom.
+
+`SetReplicateMovement` is deliberately left on: it is `COND_SimulatedOrPhysics` in the
+engine, so the owner never paid for it, and it is how other players' cars move. There is
+no double-send to remove.
+
+This step is behaviour-neutral on purpose - `OnRep_ServerMoveAck` still hard-snaps exactly
+as the old handler did - so a replication break can be told apart from a feel change.
+Replay and smoothing arrive in N-008.
+
+`OverlaneEditor Win64 Development` compiles clean. Single-player is untouched.
