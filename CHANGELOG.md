@@ -408,3 +408,35 @@ as the old handler did - so a replication break can be told apart from a feel ch
 Replay and smoothing arrive in N-008.
 
 `OverlaneEditor Win64 Development` compiles clean. Single-player is untouched.
+
+# 2026-07-28 - Netcode N-005 and N-006: measurement first, then authority hygiene
+
+## N-005 - the correction overlay ships BEFORE the correction
+
+`overlane.Net.DrawCorrection 1` draws the server's last acknowledged pose as a wireframe
+ghost box and prints the longitudinal, lateral and yaw error plus the acked input
+sequence. Deliberately not gated on the game mode, which is null on a client - precisely
+where the number needs to be readable.
+
+Every remaining step in this rework is tuning against this error, and without a ghost
+there is no way to tell a genuine divergence from a projection artefact. Prediction is
+still off, so the ghost must currently sit exactly on the car: that is the check that the
+measurement itself is trustworthy before anything is enforced.
+
+## N-006 - authority hygiene, including a live single-player exploit
+
+1. **`R` was a free full turbo bar.** `ResetState` refilled `BoostCharge` to 1.0, and
+   `RecoverToStart` called it with no cooldown - on the host, server-side, with nothing to
+   stop it. Recovery now preserves the boost charge.
+2. **Recovery is now the server's decision.** It ran client-locally with no authority check
+   and no cooldown, so a client could reposition itself at will and the next correction
+   would drag it back - a rubber-band loop that also read as a bug. It is now a reliable
+   server RPC with a 5 s cooldown, gated on driving being allowed.
+3. **`RegisterTrafficImpact` is split by authority.** Local impact feedback runs anywhere,
+   because being a frame early on a cosmetic flash beats being a round trip late. But
+   `MarkPlayerCollision`, the contact set and the game-mode collision counter are now
+   server-only. `MarkPlayerCollision` permanently disarms that traffic car's near-miss
+   encounter, so a client running it silently denied itself points for a collision the
+   server may never have agreed happened.
+
+`OverlaneEditor Win64 Development` compiles clean.

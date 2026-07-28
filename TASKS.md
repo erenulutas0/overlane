@@ -85,8 +85,8 @@ a replicated lane speed. Full plan and rationale in `DECISIONS.md`.
 | N-002 | in verification | Sequenced, redundant input batches | N-000 | `ServerSendMoveBatch` at 30 Hz carrying every unacked command. With `NetEmulation.PktLoss 20`, holding then releasing throttle must coast to a stop and never run away. |
 | N-003 | in verification | Traffic lane speed and client extrapolation | N-000 | `ReplicatedLaneSpeed` on traffic plus capped client-side kinematic extrapolation; client traffic position error under ~15 cm at 150 ms RTT. |
 | N-004 | in verification | Wire-format swap, behaviour neutral | N-002 | `FOverlaneMoveAck` replaces `OwnerServerTransform`; no behaviour change, so a replication break is diagnosable in isolation. |
-| N-005 | pending | Correction debug overlay / server ghost | N-004 | `overlane.Net.DrawCorrection` draws the server pose and the error magnitude. Ships before any enforcement. |
-| N-006 | pending | Authority hygiene | N-004 | Client control RPCs for pause/restart/menu; `ReturnToMainMenu` uses server travel on a listen server. A joined client's only exit today is Alt+F4. |
+| N-005 | done | Correction debug overlay / server ghost | N-004 | `overlane.Net.DrawCorrection` draws the server pose and the error magnitude. Ships before any enforcement. |
+| N-006 | in verification | Authority hygiene | N-004 | Client control RPCs for pause/restart/menu; `ReturnToMainMenu` uses server travel on a listen server. A joined client's only exit today is Alt+F4. |
 | N-007 | pending | Prediction on, reconcile in log-only mode | N-005, N-006 | The client simulates locally; corrections are measured and logged but not applied. Error distribution recorded before thresholds are chosen. |
 | N-008 | pending | Reconcile enforcement, replay and smoothing | N-007 | Replay re-simulates unacked input with the collision cut suppressed. At 100 ms RTT and 2% loss the local car answers steering within one frame and never visibly snaps. |
 | N-009 | pending | Visual absorber | N-008 | Collision root is smoothed and the mesh lags only on hard snaps. |

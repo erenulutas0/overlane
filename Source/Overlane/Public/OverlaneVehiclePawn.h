@@ -55,6 +55,21 @@ public:
     void EnqueueInputCommand(const struct FOverlaneInputCommand& Command);
     void ClearPendingInputCommands();
 
+    /**
+     * How far this machine's pose is from the server's last acknowledged one.
+     *
+     * Meaningless until prediction is enabled, and that is the point: it must
+     * read zero while the client is a pure echo, which is the check that the
+     * measurement itself is trustworthy before any correction is enforced.
+     */
+    static bool IsCorrectionDebugEnabled();
+    bool HasServerGhost() const;
+    FVector GetServerGhostLocation() const;
+    float GetPredictionErrorLongitudinalCm() const;
+    float GetPredictionErrorLateralCm() const;
+    float GetPredictionErrorYawDegrees() const;
+    uint16 GetAckedSequence() const { return ServerMoveAck.Sequence; }
+
     /** Scales top speed and acceleration. Only the AI rival moves this. */
     void SetPerformanceScale(float InScale);
 

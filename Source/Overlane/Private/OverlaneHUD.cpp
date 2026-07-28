@@ -338,6 +338,21 @@ void AOverlaneHUD::DrawHUD()
         Canvas->DrawItem(NearMissItem);
     }
 
+    // Deliberately NOT gated on the game mode: it is null on a client, which is
+    // precisely where the prediction error needs to be readable.
+    if (VehiclePawn->HasServerGhost() && AOverlaneVehiclePawn::IsCorrectionDebugEnabled())
+    {
+        const FString NetDebugText = FString::Printf(
+            TEXT("NET  ILERI %+.0f cm  YANAL %+.0f cm  YAW %+.1f  ACK %u"),
+            VehiclePawn->GetPredictionErrorLongitudinalCm(),
+            VehiclePawn->GetPredictionErrorLateralCm(),
+            VehiclePawn->GetPredictionErrorYawDegrees(),
+            VehiclePawn->GetAckedSequence());
+        FCanvasTextItem NetDebugItem(FVector2D(48.0f, Canvas->ClipY - 76.0f), FText::FromString(NetDebugText), GEngine->GetSmallFont(), FLinearColor(0.4f, 0.85f, 1.0f));
+        NetDebugItem.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(NetDebugItem);
+    }
+
     if (MenuGameMode && MenuGameMode->IsTrafficDebugOverlayVisible())
     {
         const FString TrafficDebugText = FString::Printf(TEXT("DEBUG TRAFIK: %d / %d"), MenuGameMode->GetActiveTrafficCount(), MenuGameMode->GetTrafficPoolSize());

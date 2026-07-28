@@ -17,7 +17,12 @@ public:
     void SetBrakeInput(float Value);
     void SetSteeringInput(float Value);
     void SetBoostInput(bool bEnabled);
-    void ResetState();
+    /**
+     * @param bRefillBoost  false for in-race recovery. Refilling there made R a
+     *                      free full turbo bar with no cooldown, which on the
+     *                      host ran server-side and was simply an exploit.
+     */
+    void ResetState(bool bRefillBoost = true);
     float GetSpeedKph() const;
     float GetSpeedRatio() const;
 

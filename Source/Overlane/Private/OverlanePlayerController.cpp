@@ -309,8 +309,34 @@ void AOverlanePlayerController::HandleRecovery(const FInputActionValue& Value)
         }
     }
 
+    // A teleport is the server's call. In standalone this still lands on the
+    // server implementation directly, so solo play is unchanged.
+    ServerRequestRecovery();
+}
+
+void AOverlanePlayerController::ServerRequestRecovery_Implementation()
+{
+    const UWorld* World = GetWorld();
+    if (!World)
+    {
+        return;
+    }
+
+    const AOverlaneGameModeBase* GameMode = World->GetAuthGameMode<AOverlaneGameModeBase>();
+    if (!GameMode || !GameMode->IsDrivingAllowed())
+    {
+        return;
+    }
+
+    const float Now = World->GetTimeSeconds();
+    if (Now - LastRecoveryTime < RecoveryCooldownSeconds)
+    {
+        return;
+    }
+
     if (AOverlaneVehiclePawn* VehiclePawn = Cast<AOverlaneVehiclePawn>(GetPawn()))
     {
+        LastRecoveryTime = Now;
         VehiclePawn->RecoverToStart();
     }
 }

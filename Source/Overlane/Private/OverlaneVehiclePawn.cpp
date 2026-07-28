@@ -1,5 +1,16 @@
 #include "OverlaneVehiclePawn.h"
 
+#include "DrawDebugHelpers.h"
+
+namespace
+{
+    static TAutoConsoleVariable<int32> CVarDrawCorrection(
+        TEXT("overlane.Net.DrawCorrection"),
+        0,
+        TEXT("1: draw the server's acknowledged pose as a ghost box and show the prediction error."),
+        ECVF_Cheat);
+}
+
 #include "ArcadeHandlingComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Components/BoxComponent.h"
@@ -253,6 +264,24 @@ void AOverlaneVehiclePawn::Tick(float DeltaSeconds)
             (ArcadeHandling->IsInputStarved() ? 0x04 : 0x00);
     }
 
+    if (HasServerGhost() && IsCorrectionDebugEnabled())
+    {
+        // A wireframe box at the server's last acknowledged pose. Without this you
+        // cannot tell a genuine divergence from a projection artefact, and every
+        // remaining step in this rework is tuning against exactly that number.
+        const FRotator GhostRotation(0.0f, ServerMoveAck.YawQ * (360.0f / 65536.0f), 0.0f);
+        DrawDebugBox(
+            GetWorld(),
+            FVector(ServerMoveAck.Location),
+            VehicleCollision->GetScaledBoxExtent(),
+            GhostRotation.Quaternion(),
+            FColor(255, 200, 60),
+            false,
+            -1.0f,
+            0,
+            3.0f);
+    }
+
     const float SpeedRatio = FMath::Clamp(GetSpeedKph() / 245.0f, 0.0f, 1.0f);
     const float TurboCameraKick = IsBoostActive() ? 7.0f : 0.0f;
     const float TargetDistance = FMath::Lerp(BaseCameraDistance, MaxCameraDistance + (IsBoostActive() ? 135.0f : 0.0f), SpeedRatio);
@@ -324,6 +353,39 @@ float AOverlaneVehiclePawn::GetForwardSpeedCms() const
     return ArcadeHandling->GetForwardSpeed();
 }
 
+bool AOverlaneVehiclePawn::IsCorrectionDebugEnabled()
+{
+    return CVarDrawCorrection.GetValueOnGameThread() != 0;
+}
+
+bool AOverlaneVehiclePawn::HasServerGhost() const
+{
+    return !HasAuthority() && GetNetMode() != NM_Standalone && IsLocallyControlled();
+}
+
+FVector AOverlaneVehiclePawn::GetServerGhostLocation() const
+{
+    return ServerMoveAck.Location;
+}
+
+float AOverlaneVehiclePawn::GetPredictionErrorLongitudinalCm() const
+{
+    // Along the car's own forward axis: this is the error the player feels as
+    // being ahead of or behind where the server thinks they are.
+    return FVector::DotProduct(GetActorLocation() - FVector(ServerMoveAck.Location), GetActorForwardVector());
+}
+
+float AOverlaneVehiclePawn::GetPredictionErrorLateralCm() const
+{
+    return FVector::DotProduct(GetActorLocation() - FVector(ServerMoveAck.Location), GetActorRightVector());
+}
+
+float AOverlaneVehiclePawn::GetPredictionErrorYawDegrees() const
+{
+    const float ServerYaw = ServerMoveAck.YawQ * (360.0f / 65536.0f);
+    return FMath::FindDeltaAngleDegrees(ServerYaw, GetActorRotation().Yaw);
+}
+
 void AOverlaneVehiclePawn::EnqueueInputCommand(const FOverlaneInputCommand& Command)
 {
     ArcadeHandling->EnqueueCommand(Command);
@@ -367,7 +429,9 @@ void AOverlaneVehiclePawn::RegisterRivalImpact()
 
 void AOverlaneVehiclePawn::RecoverToStart()
 {
-    ArcadeHandling->ResetState();
+    // Recovery must not hand back a full turbo bar: R was a free refill with no
+    // cooldown, and on the host it ran server-side with nothing to stop it.
+    ArcadeHandling->ResetState(/*bRefillBoost=*/false);
     SetActorTransform(RecoveryTransform, false, nullptr, ETeleportType::TeleportPhysics);
 }
 
@@ -444,17 +508,28 @@ void AOverlaneVehiclePawn::RegisterTrafficImpact(ATrafficVehicleBase* TrafficVeh
         return;
     }
 
+    // Local feedback runs everywhere, including on a predicting client: it is
+    // cosmetic and being a frame early is better than being a round trip late.
     TrafficImpactFeedbackRemaining = TrafficImpactFeedbackDuration;
     TrafficImpactFeedbackColor = TrafficVehicle->GetTrafficColor();
     bLastImpactWasRival = false;
 
-    // An AI rival must never touch human race state.  MarkPlayerCollision would
-    // permanently disarm this traffic car's near-miss encounter, so the bot would
-    // silently deny the human points just by driving near the same traffic.
-    if (!bIsAIRacer)
+    // Everything below mutates shared race state and is therefore server-only.
+    // MarkPlayerCollision in particular permanently disarms this traffic car's
+    // near-miss encounter -- a client running it would silently deny itself
+    // points for a collision the server may never have agreed happened.
+    if (!HasAuthority())
     {
-        TrafficVehicle->MarkPlayerCollision();
+        return;
     }
+
+    // An AI rival must never touch human race state.
+    if (bIsAIRacer)
+    {
+        return;
+    }
+
+    TrafficVehicle->MarkPlayerCollision();
 
     if (ActiveTrafficCollisionContacts.Contains(TrafficVehicle))
     {
@@ -462,10 +537,6 @@ void AOverlaneVehiclePawn::RegisterTrafficImpact(ATrafficVehicleBase* TrafficVeh
     }
 
     ActiveTrafficCollisionContacts.Add(TrafficVehicle);
-    if (bIsAIRacer)
-    {
-        return;
-    }
 
     if (AOverlaneGameModeBase* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr)
     {

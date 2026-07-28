@@ -33,6 +33,16 @@ protected:
     UFUNCTION(Server, Unreliable, WithValidation)
     void ServerSendMoveBatch(const FOverlaneMoveBatch& Batch);
 
+    /**
+     * Recovery is a teleport, so it has to be the server's decision.
+     *
+     * It used to run client-locally with no authority check and no cooldown, so
+     * a client could reposition itself at will and the next correction would just
+     * drag it back -- a rubber-band loop that also looked like a bug.
+     */
+    UFUNCTION(Server, Reliable)
+    void ServerRequestRecovery();
+
 private:
     void ApplyVehicleInput(float Throttle, float Brake, float Steering, bool bBoost);
     void TickLocalCommandStream(float DeltaSeconds);
@@ -65,6 +75,12 @@ private:
 
     /** Server side: the highest sequence accepted from this client so far. */
     uint16 LastAcceptedSequence = 0;
+
+    /** Server side: world time of the last granted recovery, for the cooldown. */
+    float LastRecoveryTime = -1000.0f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Overlane|Recovery", meta = (ClampMin = "0.0"))
+    float RecoveryCooldownSeconds = 5.0f;
 
     UPROPERTY(Transient)
     TObjectPtr<UInputMappingContext> DrivingMappingContext;

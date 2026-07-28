@@ -35,17 +35,21 @@ void UArcadeHandlingComponent::SetPerformanceScale(float InScale)
     PerformanceScale = FMath::Clamp(InScale, 0.5f, 1.15f);
 }
 
-void UArcadeHandlingComponent::ResetState()
+void UArcadeHandlingComponent::ResetState(bool bRefillBoost)
 {
     ThrottleInput = 0.0f;
     BrakeInput = 0.0f;
     SteeringInput = 0.0f;
     bBoostRequested = false;
     bBoostActive = false;
-    BoostCharge = 1.0f;
     CurrentSpeed = 0.0f;
     StepAccumulator = 0.0f;
     CollisionCutCooldown = 0.0f;
+
+    if (bRefillBoost)
+    {
+        BoostCharge = 1.0f;
+    }
 }
 
 float UArcadeHandlingComponent::GetSpeedKph() const
