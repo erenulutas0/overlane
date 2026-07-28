@@ -19,5 +19,7 @@
 | BOT-004 | medium | resolved | Traffic spawn safety, spawn window anchoring and lane-change safety all iterated player controllers, which the bot does not have, so traffic spawned inside the bot and merged through it. | Resolved: a cached racer list covers humans and AI; the spawn window uses the lead racer and recycling the trailing racer. |
 | RACE-001 | medium | resolved | Bot finish detection was nested inside the human-pawn null check, so a momentarily missing player pawn made the race unfinishable. | Resolved: hoisted out of the block. |
 | BOT-005 | low | open | Difficulty is read once when the bot spawns, so changing `RAKIP ZORLUGU` from the pause menu only takes effect on the next race. | Restart the race after changing it, or push the value live the way `CameraFovOffset` is pushed. |
+| SAVE-001 | medium | open | The persistent best solo time is a legacy record from the 300 m test route (`EN IYI: 6.7 SN`), which is unbeatable on the current 6 km route. `UOverlaneProgressSaveGame` has no route or difficulty dimension, so records also cannot distinguish KOLAY from ZOR runs. | Add a route id/length and difficulty to the save and invalidate records when either changes. |
+| INPUT-003 | low | resolved | `MenuBackAction` was mapped only to Escape, which the editor consumes in PIE - pressing it stopped the session instead of leaving the settings screen. | Resolved: BackSpace and Q are mapped alongside Escape and the on-screen hints name them. |
 
 No further gameplay defects are known.

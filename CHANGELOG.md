@@ -303,3 +303,16 @@ The "changes lane very slowly" half of the report had a separate, structural cau
   at 2600 it tripped at 0.53 s and the overtake could never arm at cruising speed.
 
 `OverlaneEditor Win64 Development` compiles clean. Runtime validation pending.
+
+# 2026-07-28 - Rival validated in play
+
+Manual solo run confirms the corrected control loop. The rival accelerates on open
+road, slows and holds a gap behind slower traffic rather than grinding its bumper,
+changes lane when it is held up, and returns to speed once the road clears. The
+tester's summary: it drives "just like us". The HUD rival gap reads correctly and
+flips colour on overtake, and the settings screen can now be backed out of with Q.
+
+P5-005 is closed. Remaining rival work is polish, tracked as BOT-005 (difficulty is
+read once at spawn, so pause-menu changes apply next race) and SAVE-001 (the
+persistent best time is a legacy record from the retired 300 m route and is
+unbeatable on the current 6 km one).
