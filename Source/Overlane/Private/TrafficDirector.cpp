@@ -2,6 +2,7 @@
 
 #include "Kismet/GameplayStatics.h"
 #include "OverlaneGameModeBase.h"
+#include "OverlaneVehiclePawn.h"
 #include "TrafficLanePath.h"
 #include "TrafficVehicleBase.h"
 #include "GameFramework/PlayerController.h"
@@ -55,6 +56,9 @@ void ATrafficDirector::Tick(float DeltaSeconds)
     {
         return;
     }
+
+    // Must run before anything that asks where the racers are.
+    RefreshRacerCache(DeltaSeconds);
 
     RecycleVehiclesBehindPlayer();
 
@@ -137,24 +141,67 @@ void ATrafficDirector::SpawnInitialPool()
     }
 }
 
-float ATrafficDirector::GetPlayerLaneDistance(const ATrafficLanePath* Lane) const
+void ATrafficDirector::RefreshRacerCache(float DeltaSeconds)
 {
-    if (!Lane || !GetWorld())
+    RacerCacheRemaining -= DeltaSeconds;
+    if (RacerCacheRemaining > 0.0f && CachedRacers.Num() > 0)
+    {
+        return;
+    }
+
+    // These lookups run per traffic vehicle per frame, so the actor scan is
+    // amortised rather than repeated.
+    RacerCacheRemaining = 0.5f;
+
+    TArray<AActor*> FoundRacers;
+    UGameplayStatics::GetAllActorsOfClass(this, AOverlaneVehiclePawn::StaticClass(), FoundRacers);
+
+    CachedRacers.Reset();
+    for (AActor* RacerActor : FoundRacers)
+    {
+        if (AOverlaneVehiclePawn* Racer = Cast<AOverlaneVehiclePawn>(RacerActor))
+        {
+            CachedRacers.Add(Racer);
+        }
+    }
+}
+
+float ATrafficDirector::GetLeadRacerLaneDistance(const ATrafficLanePath* Lane) const
+{
+    if (!Lane)
     {
         return 0.0f;
     }
 
-    float FurthestPlayerDistance = 0.0f;
-    for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+    float FurthestDistance = 0.0f;
+    for (const AOverlaneVehiclePawn* Racer : CachedRacers)
     {
-        const APawn* PlayerPawn = It->Get() ? It->Get()->GetPawn() : nullptr;
-        if (PlayerPawn)
+        if (Racer)
         {
-            FurthestPlayerDistance = FMath::Max(FurthestPlayerDistance, Lane->GetClosestDistanceToLocation(PlayerPawn->GetActorLocation()));
+            FurthestDistance = FMath::Max(FurthestDistance, Lane->GetClosestDistanceToLocation(Racer->GetActorLocation()));
         }
     }
 
-    return FurthestPlayerDistance;
+    return FurthestDistance;
+}
+
+float ATrafficDirector::GetTrailingRacerLaneDistance(const ATrafficLanePath* Lane) const
+{
+    if (!Lane)
+    {
+        return 0.0f;
+    }
+
+    float NearestDistance = TNumericLimits<float>::Max();
+    for (const AOverlaneVehiclePawn* Racer : CachedRacers)
+    {
+        if (Racer)
+        {
+            NearestDistance = FMath::Min(NearestDistance, Lane->GetClosestDistanceToLocation(Racer->GetActorLocation()));
+        }
+    }
+
+    return NearestDistance == TNumericLimits<float>::Max() ? 0.0f : NearestDistance;
 }
 
 void ATrafficDirector::RefreshSpawnDistance(int32 VehicleIndex)
@@ -173,7 +220,7 @@ void ATrafficDirector::RefreshSpawnDistance(int32 VehicleIndex)
     const int32 SlotIndex = VehicleIndex % VehiclesPerLane;
     const int32 LaneIndex = VehicleIndex / VehiclesPerLane;
     const float LaneStagger = (LaneIndex % 3) * (TrafficSpacing * 0.32f);
-    const float RequestedDistance = GetPlayerLaneDistance(Lane) + InitialSpawnDistance + (SlotIndex * TrafficSpacing) + LaneStagger;
+    const float RequestedDistance = GetLeadRacerLaneDistance(Lane) + InitialSpawnDistance + (SlotIndex * TrafficSpacing) + LaneStagger;
     PoolSpawnDistances[VehicleIndex] = FMath::Min(RequestedDistance, Lane->GetLaneLength() - 100.0f);
 }
 
@@ -188,7 +235,7 @@ void ATrafficDirector::RecycleVehiclesBehindPlayer()
             continue;
         }
 
-        if (Vehicle->GetLaneDistance() < GetPlayerLaneDistance(Lane) - RecycleBehindPlayerDistance)
+        if (Vehicle->GetLaneDistance() < GetTrailingRacerLaneDistance(Lane) - RecycleBehindPlayerDistance)
         {
             Vehicle->DeactivateForPool();
             RespawnTimers[Index] = RespawnDelaySeconds;
@@ -254,16 +301,14 @@ bool ATrafficDirector::IsSpawnSafeForPlayer(int32 VehicleIndex) const
         return false;
     }
 
+    // Every racer counts, not just human ones: traffic used to spawn inside the
+    // AI rival because it has no player controller to iterate.
     const FVector SpawnLocation = Lanes[VehicleIndex]->GetTransformAtDistance(PoolSpawnDistances[VehicleIndex]).GetLocation();
-    if (const UWorld* World = GetWorld())
+    for (const AOverlaneVehiclePawn* Racer : CachedRacers)
     {
-        for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+        if (Racer && FVector::DistSquared2D(Racer->GetActorLocation(), SpawnLocation) < FMath::Square(MinimumPlayerSpawnDistance))
         {
-            const APawn* PlayerPawn = It->Get() ? It->Get()->GetPawn() : nullptr;
-            if (PlayerPawn && FVector::DistSquared2D(PlayerPawn->GetActorLocation(), SpawnLocation) < FMath::Square(MinimumPlayerSpawnDistance))
-            {
-                return false;
-            }
+            return false;
         }
     }
 
@@ -293,6 +338,12 @@ bool ATrafficDirector::IsSpawnSafeForTraffic(int32 VehicleIndex) const
     }
 
     return true;
+}
+
+float ATrafficDirector::ComputeFollowSpeedLimit(float LeaderSpeed, float Gap, float MinGap, float MaxGap)
+{
+    const float GapAlpha = FMath::GetRangePct(MinGap, MaxGap, Gap);
+    return LeaderSpeed * FMath::Clamp(GapAlpha, 0.0f, 1.0f);
 }
 
 void ATrafficDirector::UpdateTrafficFollowing(float DeltaSeconds)
@@ -331,9 +382,9 @@ void ATrafficDirector::UpdateTrafficFollowing(float DeltaSeconds)
 
             if (VehicleAhead && ClosestGap < FollowingDistance)
             {
-                const float GapAlpha = FMath::GetRangePct(MinimumFollowingDistance, FollowingDistance, ClosestGap);
-                const float FollowSpeed = VehicleAhead->GetCurrentSpeed() * FMath::Clamp(GapAlpha, 0.0f, 1.0f);
-                SpeedLimit = FMath::Min(SpeedLimit, FollowSpeed);
+                SpeedLimit = FMath::Min(
+                    SpeedLimit,
+                    ComputeFollowSpeedLimit(VehicleAhead->GetCurrentSpeed(), ClosestGap, MinimumFollowingDistance, FollowingDistance));
             }
         }
 
@@ -394,15 +445,19 @@ bool ATrafficDirector::IsLaneChangeSafe(const ATrafficVehicleBase* Vehicle, cons
     }
 
     const FVector TargetLocation = TargetLane->GetTransformAtDistance(Vehicle->GetLaneDistance()).GetLocation();
-    if (const UWorld* World = GetWorld())
+    for (const AOverlaneVehiclePawn* Racer : CachedRacers)
     {
-        for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+        if (!Racer)
         {
-            const APawn* PlayerPawn = It->Get() ? It->Get()->GetPawn() : nullptr;
-            if (PlayerPawn && FVector::DistSquared2D(PlayerPawn->GetActorLocation(), TargetLocation) < FMath::Square(MinimumPlayerLaneChangeDistance))
-            {
-                return false;
-            }
+            continue;
+        }
+
+        // The human gets a wide fairness bubble; the rival only needs physical
+        // clearance, or traffic would stop changing lanes anywhere near it.
+        const float Exclusion = Racer->IsAIRacer() ? MinimumBotLaneChangeDistance : MinimumPlayerLaneChangeDistance;
+        if (FVector::DistSquared2D(Racer->GetActorLocation(), TargetLocation) < FMath::Square(Exclusion))
+        {
+            return false;
         }
     }
 

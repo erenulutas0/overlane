@@ -18,6 +18,14 @@ public:
     FTransform GetTransformAtDistance(float Distance) const;
     float GetClosestDistanceToLocation(const FVector& WorldLocation) const;
 
+    /**
+     * Every usable lane, sorted by ascending world Y: index 0 is leftmost and
+     * Last() is rightmost. Degenerate lanes are dropped so that the traffic
+     * director, the game mode and the AI rival all share one index space --
+     * they previously each rolled their own list with different filters.
+     */
+    static void CollectSortedLanes(const UObject* WorldContextObject, TArray<ATrafficLanePath*>& OutLanes);
+
 protected:
     virtual void OnConstruction(const FTransform& Transform) override;
     virtual void BeginPlay() override;

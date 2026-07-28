@@ -185,3 +185,72 @@
 `OverlaneEditor Win64 Development` compiles clean. **No part of the session flow has been
 run yet** - `OnlineSubsystemNull` only discovers over LAN broadcast, so it needs two
 packaged builds on one network to validate.
+
+# 2026-07-28 - Practice bot becomes a competitive rival (P5-005)
+
+## The reported bug, and what it actually was
+
+The user reported: "the bot never leaves the right lane; it drives directly behind the
+traffic car ahead of it without hitting it and just travels along with it."
+
+It was not polite car-following. The bot had a hardcoded `SetBrakeInput(0.0f)` next to a
+constant `SetThrottleInput(0.82f)` and no perception at all, so it drove *into* the traffic
+car every frame. The swept move was blocked by that car's collision and the horizontal
+impact penalty cut its speed to 45%, after which the throttle re-closed the gap - a
+multi-hertz limit cycle pinned to the lead car's speed. From the chase camera that reads as
+a car keeping station. It also had no lane-change logic whatsoever, and never boosted, so
+its ceiling was 180 km/h against the player's 244.8 km/h; the outcome was decided in advance.
+
+## Bot driver rewrite
+
+- Forward sensing along the lane spline, following the traffic system's own car-following
+  curve (now shared as `ATrafficDirector::ComputeFollowSpeedLimit`) so the rival and the
+  traffic around it behave identically. Following distances scale with real closing speed,
+  because the bot closes ~3.8x faster than traffic closes on traffic.
+- Real throttle/brake control. These are mutually exclusive in the handling component, so
+  the controller never sets both.
+- Overtaking: when held below cruise for 0.6 s it scores both neighbouring lanes and merges
+  into the better one, steering the pawn physically rather than teleporting it. Asymmetric,
+  speed-scaled safety windows; aborts and steers back if the target lane closes up.
+- Fixed the `StartingDistance` lower clamp, which froze the bot's perceived progress forever
+  if anything knocked it backwards. Distance is now tracked continuously with a per-frame
+  step limit. Added spin recovery: brake, turn, resume.
+- Steering gained a damping term, a speed-scaled look-ahead and a slew limit, so a lane
+  change reads as a merge rather than a swerve at 180 km/h.
+- Difficulty setting (`RAKIP ZORLUGU: KOLAY / NORMAL / ZOR`) driving speed scale, turbo use
+  and rubber-band strength, persisted in the local settings save. Applies on the next race.
+- Turbo use with hysteresis, never while blocked, merging or in contact. Sustainable duty is
+  ~30%, giving roughly 199 km/h average - beats a human who never boosts, loses to one who
+  boosts well.
+- Light rubber-banding (max +-6% at 120 m) that freezes inside the last 300 m so the finish
+  is honest. Per-race random seed so two runs at the same difficulty differ.
+
+## Correctness fixes found along the way
+
+- **Near-miss theft (live bug).** `ATrafficVehicleBase::HandleNearMissBegin/End` did not
+  check `IsAIRacer`, and the end handler cleared the shared encounter flag unconditionally.
+  A bot passing a traffic car silently cancelled the human's in-flight near miss. The
+  pawn-side guards added earlier did not cover this path.
+- **Traffic could not see the bot.** Spawn safety, the spawn window anchor and lane-change
+  safety all iterated player controllers, which the bot does not have - so traffic spawned
+  inside it and merged through it. All three now use a cached racer list. The spawn window
+  uses the lead racer and recycling uses the trailing racer, which were previously the same
+  function returning the wrong answer for one of them.
+- `ShouldHoldForPlayer` is deliberately left human-only, now with a comment saying why:
+  it hard-stops traffic as an anti-tunnelling hack, and including the bot would deadlock
+  both cars at a standstill.
+- Bot finish detection was nested inside the human-pawn null check, so a momentarily missing
+  player pawn made the race unfinishable. Hoisted out.
+- Settings values are clamped on load; `GetSettingsLine` indexes fixed arrays with them.
+
+## Other
+
+- Racer-on-racer contact shows `RAKIP TEMASI` in amber and deliberately does not charge the
+  human the 750-point traffic-collision penalty. The bot lifts off for a beat after contact.
+- The rival is crimson, unused by the player or any traffic profile.
+- Solo HUD shows `RAKIP: n M ONDE / GERIDE`.
+- One shared `ATrafficLanePath::CollectSortedLanes` replaces three hand-rolled lane lists
+  that used different filters and could disagree on what lane index N meant.
+
+`OverlaneEditor Win64 Development` compiles clean. **Runtime validation is pending** - none
+of the new driving behaviour has been observed in play yet.

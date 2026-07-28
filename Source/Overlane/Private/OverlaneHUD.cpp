@@ -107,7 +107,7 @@ void AOverlaneHUD::DrawHUD()
         SettingsTitle.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(SettingsTitle);
 
-        for (int32 Index = 0; Index < 5; ++Index)
+        for (int32 Index = 0; Index < MenuGameMode->GetSettingsRowCount(); ++Index)
         {
             const bool bSelected = MenuGameMode->GetSettingsSelection() == Index;
             const FString SettingText = FString::Printf(TEXT("%s %s"), bSelected ? TEXT(">") : TEXT(" "), *MenuGameMode->GetSettingsLine(Index));
@@ -307,9 +307,26 @@ void AOverlaneHUD::DrawHUD()
         }
     }
 
+    // The rival gap only exists in solo play: a practice bot never spawns in a
+    // networked race, so drawing it there would show a permanently stale value.
+    if (MenuGameMode && !bUseNetworkRaceUi && MenuGameMode->HasPracticeRival())
+    {
+        const int32 GapMeters = MenuGameMode->GetRivalGapMeters();
+        const FString RivalText = GapMeters >= 0
+            ? FString::Printf(TEXT("RAKIP: %d M GERIDE"), GapMeters)
+            : FString::Printf(TEXT("RAKIP: %d M ONDE"), -GapMeters);
+        FCanvasTextItem RivalItem(FVector2D(48.0f, 232.0f), FText::FromString(RivalText), GEngine->GetMediumFont(),
+            GapMeters >= 0 ? FLinearColor(0.35f, 1.0f, 0.55f) : FLinearColor(1.0f, 0.45f, 0.28f));
+        RivalItem.EnableShadow(FLinearColor::Black);
+        Canvas->DrawItem(RivalItem);
+    }
+
     if (VehiclePawn->IsTrafficImpactFeedbackActive())
     {
-        FCanvasTextItem ImpactItem(FVector2D((Canvas->ClipX * 0.5f) - 165.0f, 105.0f), FText::FromString(TEXT("TRAFIK CARPISMASI")), GEngine->GetLargeFont(), VehiclePawn->GetTrafficImpactFeedbackColor());
+        const bool bRivalContact = VehiclePawn->IsRivalContactFeedbackActive();
+        FCanvasTextItem ImpactItem(FVector2D((Canvas->ClipX * 0.5f) - 165.0f, 105.0f),
+            FText::FromString(bRivalContact ? TEXT("RAKIP TEMASI") : TEXT("TRAFIK CARPISMASI")),
+            GEngine->GetLargeFont(), VehiclePawn->GetTrafficImpactFeedbackColor());
         ImpactItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(ImpactItem);
     }

@@ -38,6 +38,12 @@ void AOverlaneGameModeBase::BeginPlay()
             LocalSettings = Cast<UOverlaneSettingsSaveGame>(UGameplayStatics::CreateSaveGameObject(UOverlaneSettingsSaveGame::StaticClass()));
         }
 
+        // GetSettingsLine indexes fixed name arrays with these values, so a save
+        // written by an older or edited build must not be trusted unclamped.
+        LocalSettings->GraphicsQuality = FMath::Clamp(LocalSettings->GraphicsQuality, 0, 3);
+        LocalSettings->FrameRateMode = FMath::Clamp(LocalSettings->FrameRateMode, 0, 2);
+        LocalSettings->RivalDifficulty = FMath::Clamp(LocalSettings->RivalDifficulty, 0, 2);
+
         LocalProgress = Cast<UOverlaneProgressSaveGame>(UGameplayStatics::LoadGameFromSlot(TEXT("OverlaneSoloProgress"), 0));
         if (!LocalProgress)
         {
@@ -169,17 +175,19 @@ void AOverlaneGameModeBase::Tick(float DeltaSeconds)
             FinishRace(WinningPlayer);
             return;
         }
+    }
 
-        // The standalone practice bot is not a PlayerController, so it is
-        // intentionally checked after human racers.  A same-frame tie favours
-        // the human, while a bot finish ends the solo run cleanly.
-        if (PracticeBotController)
+    // The standalone practice bot is not a PlayerController, so it is
+    // intentionally checked after human racers: a same-frame tie favours the
+    // human. This sits outside the player-pawn block on purpose -- nesting it
+    // there meant a momentarily missing human pawn made the bot unable to ever
+    // finish, which stalls the race forever.
+    if (PracticeBotController)
+    {
+        const APawn* BotPawn = PracticeBotController->GetPawn();
+        if (BotPawn && BotPawn->GetActorLocation().X >= RouteFinishX)
         {
-            const APawn* BotPawn = PracticeBotController->GetPawn();
-            if (BotPawn && BotPawn->GetActorLocation().X >= RouteFinishX)
-            {
-                FinishRace(nullptr, true);
-            }
+            FinishRace(nullptr, true);
         }
     }
 }
@@ -280,6 +288,7 @@ FString AOverlaneGameModeBase::GetSettingsLine(int32 Index) const
 
     static const TCHAR* QualityNames[] = { TEXT("DUSUK"), TEXT("ORTA"), TEXT("YUKSEK"), TEXT("EPIC") };
     static const TCHAR* FrameRateNames[] = { TEXT("60 FPS"), TEXT("120 FPS"), TEXT("SINIRSIZ") };
+    static const TCHAR* DifficultyNames[] = { TEXT("KOLAY"), TEXT("NORMAL"), TEXT("ZOR") };
     switch (Index)
     {
     case 0: return FString::Printf(TEXT("GORUNTU KALITESI: %s"), QualityNames[LocalSettings->GraphicsQuality]);
@@ -287,6 +296,7 @@ FString AOverlaneGameModeBase::GetSettingsLine(int32 Index) const
     case 2: return FString::Printf(TEXT("KARE SINIRI: %s"), FrameRateNames[LocalSettings->FrameRateMode]);
     case 3: return FString::Printf(TEXT("KAMERA FOV: %+.0f"), LocalSettings->CameraFovOffset);
     case 4: return FString::Printf(TEXT("TRAFIK DEBUG: %s"), LocalSettings->bTrafficDebugOverlay ? TEXT("ACIK") : TEXT("KAPALI"));
+    case 5: return FString::Printf(TEXT("RAKIP ZORLUGU: %s"), DifficultyNames[FMath::Clamp(LocalSettings->RivalDifficulty, 0, 2)]);
     default: return FString();
     }
 }
@@ -341,17 +351,15 @@ void AOverlaneGameModeBase::SpawnPracticeBotForSoloRace()
         return;
     }
 
-    TArray<AActor*> FoundLaneActors;
-    UGameplayStatics::GetAllActorsOfClass(this, ATrafficLanePath::StaticClass(), FoundLaneActors);
-    FoundLaneActors.Sort([](const AActor& Left, const AActor& Right)
-    {
-        return Left.GetActorLocation().Y < Right.GetActorLocation().Y;
-    });
+    // One shared, length-filtered, Y-sorted lane list, so the bot, the traffic
+    // director and this spawn all agree on what lane index N means.
+    TArray<ATrafficLanePath*> SortedLanes;
+    ATrafficLanePath::CollectSortedLanes(this, SortedLanes);
 
-    // Keep the player in the middle lane and the practice car in the outer
-    // right lane.  The traffic setup uses the same Y-sorted lane convention.
-    ATrafficLanePath* BotLane = FoundLaneActors.Num() > 0 ? Cast<ATrafficLanePath>(FoundLaneActors.Last()) : nullptr;
-    if (!BotLane || BotLane->GetLaneLength() <= 100.0f)
+    // The player starts in the middle lane, so the rival starts in the outer
+    // right one. It is free to leave that lane as soon as it is held up.
+    ATrafficLanePath* BotLane = SortedLanes.Num() > 0 ? SortedLanes.Last() : nullptr;
+    if (!BotLane)
     {
         return;
     }
@@ -385,7 +393,22 @@ void AOverlaneGameModeBase::SpawnPracticeBotForSoloRace()
     }
 
     PracticeBotController->ConfigurePracticeRoute(BotLane, BotDistance);
+    PracticeBotController->ConfigureDifficulty(LocalSettings ? LocalSettings->RivalDifficulty : 1);
     PracticeBotController->Possess(BotVehicle);
+}
+
+int32 AOverlaneGameModeBase::GetRivalGapMeters() const
+{
+    const APawn* BotPawn = PracticeBotController ? PracticeBotController->GetPawn() : nullptr;
+    const APawn* PlayerPawn = UGameplayStatics::GetPlayerPawn(this, 0);
+    if (!BotPawn || !PlayerPawn)
+    {
+        return 0;
+    }
+
+    // World X is the axis both finish tests use, so a lane-spline gap could
+    // disagree with who actually crosses the line first.
+    return FMath::RoundToInt((PlayerPawn->GetActorLocation().X - BotPawn->GetActorLocation().X) / 100.0f);
 }
 
 void AOverlaneGameModeBase::DestroyPracticeBot()
@@ -489,7 +512,7 @@ void AOverlaneGameModeBase::NavigateSettings(int32 Direction)
 {
     if (bShowingSettings)
     {
-        SettingsSelection = (SettingsSelection + Direction + 5) % 5;
+        SettingsSelection = (SettingsSelection + Direction + SettingsRowCount) % SettingsRowCount;
     }
 }
 
@@ -521,6 +544,10 @@ void AOverlaneGameModeBase::AdjustSelectedSetting(int32 Direction)
         break;
     case 4:
         LocalSettings->bTrafficDebugOverlay = !LocalSettings->bTrafficDebugOverlay;
+        break;
+    case 5:
+        // Takes effect on the next race: the rival is configured once at spawn.
+        LocalSettings->RivalDifficulty = FMath::Clamp(LocalSettings->RivalDifficulty + Direction, 0, 2);
         break;
     default:
         return;

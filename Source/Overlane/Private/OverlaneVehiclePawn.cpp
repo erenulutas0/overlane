@@ -284,6 +284,49 @@ void AOverlaneVehiclePawn::OnRep_OwnerServerTransform()
 void AOverlaneVehiclePawn::SetAIRacer(bool bInIsAIRacer)
 {
     bIsAIRacer = bInIsAIRacer;
+
+    // Crimson is unused by the player (blue) and by every traffic profile
+    // (orange/blue/yellow/green), so the rival is unmistakable at 100 m.
+    if (bIsAIRacer)
+    {
+        SetBodyColor(FLinearColor(0.86f, 0.12f, 0.06f));
+    }
+}
+
+float AOverlaneVehiclePawn::GetForwardSpeedCms() const
+{
+    return ArcadeHandling->GetForwardSpeed();
+}
+
+void AOverlaneVehiclePawn::SetPerformanceScale(float InScale)
+{
+    ArcadeHandling->SetPerformanceScale(InScale);
+}
+
+void AOverlaneVehiclePawn::SetBodyColor(const FLinearColor& InColor)
+{
+    if (!VehicleBodyMaterial || !VehicleMesh)
+    {
+        return;
+    }
+
+    VehicleBodyMaterial->SetVectorParameterValue(TEXT("Color"), InColor);
+
+    // The constructor only binds VehicleBodyMaterial to the mesh on the
+    // placeholder path; with the template sports car present the pawn renders
+    // the template's own materials, so setting the parameter alone does nothing.
+    // Assign the dynamic material to every slot, as the traffic vehicles do.
+    for (int32 MaterialIndex = 0; MaterialIndex < VehicleMesh->GetNumMaterials(); ++MaterialIndex)
+    {
+        VehicleMesh->SetMaterial(MaterialIndex, VehicleBodyMaterial);
+    }
+}
+
+void AOverlaneVehiclePawn::RegisterRivalImpact()
+{
+    TrafficImpactFeedbackRemaining = TrafficImpactFeedbackDuration;
+    TrafficImpactFeedbackColor = FLinearColor(1.0f, 0.78f, 0.28f);
+    bLastImpactWasRival = true;
 }
 
 void AOverlaneVehiclePawn::RecoverToStart()
@@ -347,6 +390,14 @@ void AOverlaneVehiclePawn::HandleVehicleHit(UPrimitiveComponent* HitComponent, A
     if (ATrafficVehicleBase* TrafficVehicle = Cast<ATrafficVehicleBase>(OtherActor))
     {
         RegisterTrafficImpact(TrafficVehicle);
+        return;
+    }
+
+    // Racer-on-racer contact is deliberately NOT a traffic collision: it must not
+    // cost the human the 750-point penalty for something the rival initiated.
+    if (Cast<AOverlaneVehiclePawn>(OtherActor))
+    {
+        RegisterRivalImpact();
     }
 }
 
@@ -359,6 +410,7 @@ void AOverlaneVehiclePawn::RegisterTrafficImpact(ATrafficVehicleBase* TrafficVeh
 
     TrafficImpactFeedbackRemaining = TrafficImpactFeedbackDuration;
     TrafficImpactFeedbackColor = TrafficVehicle->GetTrafficColor();
+    bLastImpactWasRival = false;
 
     // An AI rival must never touch human race state.  MarkPlayerCollision would
     // permanently disarm this traffic car's near-miss encounter, so the bot would

@@ -28,6 +28,11 @@ void UArcadeHandlingComponent::SetBoostInput(bool bEnabled)
     bBoostRequested = bEnabled;
 }
 
+void UArcadeHandlingComponent::SetPerformanceScale(float InScale)
+{
+    PerformanceScale = FMath::Clamp(InScale, 0.5f, 1.15f);
+}
+
 void UArcadeHandlingComponent::ResetState()
 {
     ThrottleInput = 0.0f;
@@ -80,8 +85,10 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
         BoostCharge = FMath::Min(1.0f, BoostCharge + (BoostRechargePerSecond * DeltaTime));
     }
 
-    const float ActiveMaxSpeed = bBoostActive ? MaxBoostSpeed : MaxForwardSpeed;
-    const float ActiveAcceleration = Acceleration + (bBoostActive ? BoostAcceleration : 0.0f);
+    // PerformanceScale is 1.0 for the human player and only moves for the AI
+    // rival, where it carries both the difficulty setting and the rubber band.
+    const float ActiveMaxSpeed = (bBoostActive ? MaxBoostSpeed : MaxForwardSpeed) * PerformanceScale;
+    const float ActiveAcceleration = (Acceleration + (bBoostActive ? BoostAcceleration : 0.0f)) * PerformanceScale;
 
     if (ThrottleInput > 0.0f)
     {

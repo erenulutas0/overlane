@@ -56,7 +56,15 @@ public:
     void RefreshSessionSearch();
     void StartRaceFromLobby();
     bool IsTrafficDebugOverlayVisible() const;
+    float GetRouteFinishX() const { return RouteFinishX; }
+
+    // --- Practice rival readouts --------------------------------------------
+    bool HasPracticeRival() const { return PracticeBotController != nullptr; }
+
+    /** Signed metres along the route: positive means the human is ahead. */
+    int32 GetRivalGapMeters() const;
     int32 GetSettingsSelection() const { return SettingsSelection; }
+    int32 GetSettingsRowCount() const { return SettingsRowCount; }
     int32 GetMenuSelection() const { return MenuSelection; }
     FString GetSettingsLine(int32 Index) const;
     int32 GetActiveTrafficCount() const;
@@ -134,6 +142,9 @@ private:
 
     /** SOLO YARIS / OYUN KUR / OYUN BUL / AYARLAR. */
     static constexpr int32 MainMenuOptionCount = 4;
+
+    /** Quality / VSync / frame cap / FOV / traffic debug / rival difficulty. */
+    static constexpr int32 SettingsRowCount = 6;
 
     int32 SettingsSelection = 0;
     int32 MenuSelection = 0;

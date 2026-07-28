@@ -47,6 +47,19 @@ public:
     void SetAIRacer(bool bInIsAIRacer);
     bool IsAIRacer() const { return bIsAIRacer; }
 
+    /** Signed forward speed in cm/s, the unit the traffic and bot logic use. */
+    float GetForwardSpeedCms() const;
+
+    /** Scales top speed and acceleration. Only the AI rival moves this. */
+    void SetPerformanceScale(float InScale);
+
+    /** Repaints every body slot. Used to make the AI rival visually distinct. */
+    void SetBodyColor(const FLinearColor& InColor);
+
+    /** True while the recent-impact feedback came from another racer, not traffic. */
+    bool IsRivalContactFeedbackActive() const { return TrafficImpactFeedbackRemaining > 0.0f && bLastImpactWasRival; }
+    void RegisterRivalImpact();
+
 protected:
     virtual void BeginPlay() override;
     virtual void Tick(float DeltaSeconds) override;
@@ -130,6 +143,7 @@ private:
 
     float TrafficImpactFeedbackRemaining = 0.0f;
     FLinearColor TrafficImpactFeedbackColor = FLinearColor(1.0f, 0.25f, 0.12f);
+    bool bLastImpactWasRival = false;
 
     UPROPERTY(EditAnywhere, Category = "Feedback", meta = (ClampMin = "0.0"))
     float NearMissFeedbackDuration = 1.2f;

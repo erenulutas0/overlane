@@ -25,4 +25,11 @@ public:
 
     UPROPERTY()
     bool bTrafficDebugOverlay = false;
+
+    /**
+     * 0 = KOLAY, 1 = NORMAL, 2 = ZOR. USaveGame uses tagged serialisation, so an
+     * older save simply lacks this tag and picks up the default.
+     */
+    UPROPERTY()
+    int32 RivalDifficulty = 1;
 };

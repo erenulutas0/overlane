@@ -19,6 +19,16 @@ public:
     void ResetState();
     float GetSpeedKph() const;
     float GetSpeedRatio() const;
+
+    /**
+     * Signed forward speed in cm/s. The bot's follow and time-to-collision maths
+     * works in the same units the traffic system uses; GetSpeedKph is a display
+     * conversion and GetSpeedRatio divides by MaxBoostSpeed, so neither fits.
+     */
+    float GetForwardSpeed() const { return CurrentSpeed; }
+
+    /** Scales top speed and acceleration. The AI rival's difficulty lever. */
+    void SetPerformanceScale(float InScale);
     float GetBoostChargeRatio() const { return BoostCharge; }
     bool IsBoostActive() const { return bBoostActive; }
 
@@ -63,6 +73,9 @@ protected:
 
     UPROPERTY(EditAnywhere, Category = "Arcade Handling|Collision", meta = (ClampMin = "0.0", ClampMax = "1.0"))
     float CollisionSpeedMultiplier = 0.45f;
+
+    UPROPERTY(EditAnywhere, Category = "Arcade Handling|Speed", meta = (ClampMin = "0.5", ClampMax = "1.15"))
+    float PerformanceScale = 1.0f;
 
 private:
     float ThrottleInput = 0.0f;

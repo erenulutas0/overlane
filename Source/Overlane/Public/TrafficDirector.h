@@ -22,12 +22,33 @@ public:
     int32 GetActiveVehicleCount() const;
     int32 GetPoolSize() const { return VehiclePool.Num(); }
 
+    /**
+     * The shared car-following curve: speed ramps linearly from a full stop at
+     * MinGap up to the leader's own speed at MaxGap. Exposed as a static so the
+     * AI rival follows traffic using exactly the same law traffic follows itself
+     * with, rather than a second hand-tuned approximation.
+     */
+    static float ComputeFollowSpeedLimit(float LeaderSpeed, float Gap, float MinGap, float MaxGap);
+
 private:
     void SpawnInitialPool();
     void ActivateVehicle(int32 VehicleIndex);
     void RefreshSpawnDistance(int32 VehicleIndex);
     void RecycleVehiclesBehindPlayer();
-    float GetPlayerLaneDistance(const ATrafficLanePath* Lane) const;
+    void RefreshRacerCache(float DeltaSeconds);
+
+    /**
+     * Furthest racer along the lane, humans and the AI rival alike. Drives the
+     * spawn window: anchoring on humans only let a rival 90 m ahead outrun the
+     * window entirely and drive on empty road.
+     */
+    float GetLeadRacerLaneDistance(const ATrafficLanePath* Lane) const;
+
+    /**
+     * Nearest racer along the lane. Drives recycling, which must use the
+     * trailing racer or it despawns cars the human behind still needs.
+     */
+    float GetTrailingRacerLaneDistance(const ATrafficLanePath* Lane) const;
     bool IsSpawnSafeForPlayer(int32 VehicleIndex) const;
     bool IsSpawnSafeForTraffic(int32 VehicleIndex) const;
     void UpdateTrafficFollowing(float DeltaSeconds);
@@ -64,6 +85,14 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Traffic|Lane Changes", meta = (ClampMin = "0.0"))
     float MinimumPlayerLaneChangeDistance = 6000.0f;
 
+    /**
+     * Smaller than the human exclusion on purpose. The human deserves a wide
+     * no-merge bubble for fairness; the rival only needs physical clearance,
+     * and a 60 m bubble around it would suppress most traffic lane changes.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Traffic|Lane Changes", meta = (ClampMin = "0.0"))
+    float MinimumBotLaneChangeDistance = 2500.0f;
+
     UPROPERTY(EditDefaultsOnly, Category = "Traffic|Lane Changes", meta = (ClampMin = "0.0"))
     float TargetLaneClearance = 2800.0f;
 
@@ -87,6 +116,11 @@ private:
 
     UPROPERTY(Transient)
     TArray<TObjectPtr<ATrafficLanePath>> AvailableLanes;
+
+    UPROPERTY(Transient)
+    TArray<TObjectPtr<class AOverlaneVehiclePawn>> CachedRacers;
+
+    float RacerCacheRemaining = 0.0f;
 
     TArray<float> PoolSpawnDistances;
     TArray<float> RespawnTimers;

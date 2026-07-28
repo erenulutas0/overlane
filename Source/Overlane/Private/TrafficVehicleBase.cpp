@@ -233,6 +233,14 @@ void ATrafficVehicleBase::HandleNearMissBegin(UPrimitiveComponent* OverlappedCom
         return;
     }
 
+    // bNearMissEncounterActive is a single flag on this traffic car, so an AI
+    // rival entering the same trigger would overwrite whatever the human had
+    // armed. The pawn-side IsAIRacer guards do not cover this path.
+    if (PlayerVehicle->IsAIRacer())
+    {
+        return;
+    }
+
     bNearMissEncounterActive = PlayerVehicle->GetSpeedKph() >= MinimumNearMissSpeedKph;
 }
 
@@ -240,6 +248,13 @@ void ATrafficVehicleBase::HandleNearMissEnd(UPrimitiveComponent* OverlappedCompo
 {
     AOverlaneVehiclePawn* PlayerVehicle = Cast<AOverlaneVehiclePawn>(OtherActor);
     if (!bNearMissEncounterActive || bNearMissAwarded || bNearMissBlocked || !PlayerVehicle)
+    {
+        return;
+    }
+
+    // An AI rival leaving the trigger must not fall through to the unconditional
+    // clear below, which would silently cancel the human's in-flight near miss.
+    if (PlayerVehicle->IsAIRacer())
     {
         return;
     }
@@ -570,6 +585,12 @@ bool ATrafficVehicleBase::MoveAlongTrafficPath(const FTransform& TargetTransform
 
 bool ATrafficVehicleBase::ShouldHoldForPlayer(const FVector& TargetLocation) const
 {
+    // Deliberately human-only, and iterating player controllers is how that is
+    // enforced. This path is an anti-tunnelling hack for traffic's unswept
+    // SetActorTransform movement: it stops the car dead and rewinds its lane
+    // distance. The AI rival moves swept against traffic collision, so it needs
+    // no equivalent -- and making it visible here would freeze every traffic car
+    // within 540 uu of it, deadlocking the pair at a standstill.
     const float ForwardClearance = 540.0f;
     const float LateralClearance = 310.0f;
     if (const UWorld* World = GetWorld())
