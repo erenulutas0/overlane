@@ -342,12 +342,42 @@ void AOverlaneVehiclePawn::UpdateCosmeticMotion(float DeltaSeconds, float SpeedR
     // -- the largest control-feedback gap in the build. This is applied to the
     // MESH only: rolling the collision root would change the box orientation and
     // break the tested near-miss and collision behaviour.
-    const float TargetRoll = -ArcadeHandling->GetSteeringInput() * SpeedRatio * 3.5f;
+    const float TargetRoll = -ArcadeHandling->GetSteeringInput() * SpeedRatio * MaxCosmeticRollDegrees;
     const float TargetPitch = FMath::Clamp(-LongitudinalAccel / 2800.0f, -1.0f, 1.0f) * 2.2f;
-    CosmeticRoll = FMath::FInterpTo(CosmeticRoll, TargetRoll, DeltaSeconds, 6.0f);
+    CosmeticRoll = FMath::FInterpTo(CosmeticRoll, TargetRoll, DeltaSeconds, 8.0f);
     CosmeticPitch = FMath::FInterpTo(CosmeticPitch, TargetPitch, DeltaSeconds, 8.0f);
 
-    const FRotator CosmeticRotation(CosmeticPitch, 0.0f, CosmeticRoll);
+    // Impact jolt: a damped oscillation layered on top of the steady attitude, so
+    // a collision is felt rather than only announced in text.
+    float ImpactPitch = 0.0f;
+    float ImpactRoll = 0.0f;
+    if (ImpactShakeRemaining > 0.0f)
+    {
+        ImpactShakeRemaining = FMath::Max(0.0f, ImpactShakeRemaining - DeltaSeconds);
+
+        const float Alpha = ImpactShakeRemaining / FMath::Max(ImpactShakeDuration, KINDA_SMALL_NUMBER);
+        const float Decay = Alpha * Alpha;
+        const float Phase = (1.0f - Alpha) * ImpactShakeDuration * 2.0f * PI * 14.0f;
+
+        ImpactPitch = FMath::Sin(Phase) * 5.0f * Decay * ImpactShakeStrength;
+        ImpactRoll = FMath::Sin(Phase * 0.73f) * 7.0f * Decay * ImpactShakeStrength;
+
+        if (CameraBoom)
+        {
+            // Kick the camera too. The boom lag added earlier makes this settle
+            // rather than snap back.
+            CameraBoom->SetRelativeRotation(FRotator(
+                -12.0f + (ImpactPitch * 0.45f),
+                ImpactRoll * 0.35f,
+                0.0f));
+        }
+    }
+    else if (CameraBoom && !CameraBoom->GetRelativeRotation().Equals(FRotator(-12.0f, 0.0f, 0.0f), 0.01f))
+    {
+        CameraBoom->SetRelativeRotation(FRotator(-12.0f, 0.0f, 0.0f));
+    }
+
+    const FRotator CosmeticRotation(CosmeticPitch + ImpactPitch, 0.0f, CosmeticRoll + ImpactRoll);
     if (VehicleMesh)
     {
         VehicleMesh->SetRelativeRotation(CosmeticRotation);
@@ -355,6 +385,18 @@ void AOverlaneVehiclePawn::UpdateCosmeticMotion(float DeltaSeconds, float SpeedR
     if (CabinMesh)
     {
         CabinMesh->SetRelativeRotation(CosmeticRotation);
+    }
+}
+
+void AOverlaneVehiclePawn::TriggerImpactShake(float Strength)
+{
+    const float Clamped = FMath::Clamp(Strength, 0.0f, 1.0f);
+
+    // Never let a light graze cut short a heavy hit that is still settling.
+    if (Clamped * ImpactShakeDuration >= ImpactShakeRemaining * ImpactShakeStrength)
+    {
+        ImpactShakeStrength = Clamped;
+        ImpactShakeRemaining = ImpactShakeDuration;
     }
 }
 
@@ -545,6 +587,10 @@ void AOverlaneVehiclePawn::RegisterRivalImpact()
     TrafficImpactFeedbackRemaining = TrafficImpactFeedbackDuration;
     TrafficImpactFeedbackColor = FLinearColor(1.0f, 0.78f, 0.28f);
     bLastImpactWasRival = true;
+
+    // Lighter than traffic: rival contact costs no points, so it should not
+    // punish the camera as hard either.
+    TriggerImpactShake(FMath::Clamp(GetSpeedKph() / 320.0f, 0.15f, 0.7f));
 }
 
 void AOverlaneVehiclePawn::RecoverToStart()
@@ -633,6 +679,10 @@ void AOverlaneVehiclePawn::RegisterTrafficImpact(ATrafficVehicleBase* TrafficVeh
     TrafficImpactFeedbackRemaining = TrafficImpactFeedbackDuration;
     TrafficImpactFeedbackColor = TrafficVehicle->GetTrafficColor();
     bLastImpactWasRival = false;
+
+    // Scale the jolt with how fast we were going: clipping a car at 60 km/h and
+    // ploughing into one at 240 should not feel the same.
+    TriggerImpactShake(FMath::Clamp(GetSpeedKph() / 200.0f, 0.25f, 1.0f));
 
     // Everything below mutates shared race state and is therefore server-only.
     // MarkPlayerCollision in particular permanently disarms this traffic car's

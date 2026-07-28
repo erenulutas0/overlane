@@ -94,6 +94,15 @@ protected:
     /** Wheel spin, body roll and dive. Mesh-only, never simulation state. */
     void UpdateCosmeticMotion(float DeltaSeconds, float SpeedRatio, float LongitudinalAccel);
 
+    /**
+     * Visible jolt on impact.
+     *
+     * Collisions previously produced a HUD string and nothing else: the car did
+     * not flinch and the camera did not move, so hitting a car at 200 km/h read
+     * as softer than accelerating. @param Strength is 0..1.
+     */
+    void TriggerImpactShake(float Strength);
+
 private:
     UPROPERTY(VisibleAnywhere, Category = "Vehicle")
     TObjectPtr<UBoxComponent> VehicleCollision;
@@ -177,6 +186,15 @@ private:
     float CosmeticRoll = 0.0f;
     float CosmeticPitch = 0.0f;
     float PreviousForwardSpeed = 0.0f;
+    float ImpactShakeRemaining = 0.0f;
+    float ImpactShakeStrength = 0.0f;
+
+    UPROPERTY(EditAnywhere, Category = "Feedback", meta = (ClampMin = "0.0"))
+    float ImpactShakeDuration = 0.55f;
+
+    /** Degrees of body lean at full steering lock and full speed. */
+    UPROPERTY(EditAnywhere, Category = "Feedback", meta = (ClampMin = "0.0"))
+    float MaxCosmeticRollDegrees = 6.0f;
 
     float TrafficImpactFeedbackRemaining = 0.0f;
     FLinearColor TrafficImpactFeedbackColor = FLinearColor(1.0f, 0.25f, 0.12f);
