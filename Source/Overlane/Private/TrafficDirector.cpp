@@ -276,7 +276,24 @@ void ATrafficDirector::RecycleVehiclesBehindPlayer()
         // trailing racer meant that once a leader pulled away, nothing behind
         // them ever aged out and nothing new ever spawned.
         const int32 AnchorRacer = PoolAnchorRacer.IsValidIndex(Index) ? PoolAnchorRacer[Index] : 0;
-        if (Vehicle->GetLaneDistance() < GetRacerLaneDistance(AnchorRacer, Lane) - RecycleBehindPlayerDistance)
+        const float AnchorDistance = GetRacerLaneDistance(AnchorRacer, Lane);
+        const float Relative = Vehicle->GetLaneDistance() - AnchorDistance;
+
+        // Behind the anchor: the normal exit.
+        bool bShouldRecycle = Relative < -RecycleBehindPlayerDistance;
+
+        // FORWARD exit, and it is not optional.
+        //
+        // Recycling only ever fired behind the anchor. A racer travelling at
+        // traffic speed never gets 150 m past anything, and any car FASTER than
+        // it drifts beyond the supply band and can never come back - the pool
+        // slot leaks for the rest of the race. Worse, a queue that forms in front
+        // of a slow racer can never clear, which is how a rival ended up averaging
+        // 12.8 km/h for 77 seconds: slower than the slowest traffic on the road.
+        const float SupplyBand = InitialSpawnDistance + (VehiclesPerLane * TrafficSpacing);
+        bShouldRecycle |= Relative > SupplyBand + RecycleBehindPlayerDistance;
+
+        if (bShouldRecycle)
         {
             Vehicle->DeactivateForPool();
             RespawnTimers[Index] = RespawnDelaySeconds;

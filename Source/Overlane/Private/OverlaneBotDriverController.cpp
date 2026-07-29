@@ -281,8 +281,18 @@ void AOverlaneBotDriverController::ConsiderOvertake(
     }
 
     // Score lanes by the speed they would actually allow, not by raw gap.
+    //
+    // The required gain collapses when the current lane is barely moving. The
+    // follow law's fixed point makes the bot an exact speed copy of whatever is
+    // in front of it, including a standstill - so a rival that arrives behind a
+    // stopped queue inherits the standstill and, with the usual gain threshold,
+    // can never justify leaving it. Any lane that moves at all beats a lane that
+    // does not.
+    const float StalledPotential = 400.0f;
+    const float RequiredGain = CurrentSpeedPotential < StalledPotential ? 60.0f : OvertakeSpeedGain;
+
     int32 BestIndex = INDEX_NONE;
-    float BestScore = CurrentSpeedPotential + OvertakeSpeedGain;
+    float BestScore = CurrentSpeedPotential + RequiredGain;
 
     for (const int32 Offset : { -1, 1 })
     {
@@ -444,7 +454,11 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
 
     // MaxForwardSpeed is 5000 cm/s; the pawn applies the scale internally, so the
     // cruise target here uses the same scaled number the handling will allow.
-    const float CruiseSpeed = 5000.0f * RubberBandedScale;
+    // While boosting the pawn's ceiling rises to MaxBoostSpeed, and the target
+    // has to rise with it or the throttle controller backs off and cancels the
+    // boost it just asked for.
+    const float BoostCeiling = (bAllowBoost && bBoostEngaged) ? 6800.0f : 5000.0f;
+    const float CruiseSpeed = BoostCeiling * RubberBandedScale;
 
     const float DesiredSpeed = ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
 
@@ -568,11 +582,18 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
         bBoostEngaged = false;
     }
 
+    // Deliberately NOT gated on throttle magnitude.
+    //
+    // Throttle falls as the bot approaches its target, so a `Throttle > 0.5`
+    // gate cut boost out BEFORE the bot reached its own cruise speed - meaning
+    // the rival could never get anywhere near the 244.8 km/h the human uses, and
+    // no deficit was ever recoverable. Clear road and enough speed to be worth
+    // boosting are the real conditions.
     const bool bWantsBoost = bAllowBoost
         && bBoostEngaged
         && !bBlockedAhead
         && !bSpunAround
-        && Throttle > 0.5f
+        && Throttle > KINDA_SMALL_NUMBER
         && BotSpeed >= 900.0f
         && FMath::Abs(SmoothedSteering) < 0.35f
         && TargetLaneIndex == CurrentLaneIndex
