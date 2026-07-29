@@ -11,8 +11,14 @@
  */
 inline constexpr float OverlaneFixedDeltaSeconds = 1.0f / 60.0f;
 
-/** Spiral-of-death guard: never run more than this many steps in one frame. */
-inline constexpr int32 OverlaneMaxStepsPerFrame = 5;
+/**
+ * Spiral-of-death guard: never run more than this many steps in one frame.
+ *
+ * 8 rather than 5 because the accumulator remainder is now preserved: time is
+ * only lost below 7.5 fps, and it is lost identically on both machines because
+ * both read this same constant.
+ */
+inline constexpr int32 OverlaneMaxStepsPerFrame = 8;
 
 /** 128 steps is 2.13 s of input history, comfortably beyond any playable ping. */
 inline constexpr int32 OverlaneMoveRingSize = 128;
@@ -137,9 +143,52 @@ struct FOverlaneMoveAck
     UPROPERTY()
     uint8 CorrectionEpoch = 0;
 
+    /**
+     * Quantised as Cooldown / CollisionCutCooldownDuration * 255.
+     *
+     * SimulateStep both reads and writes this, so an ack that omits it does not
+     * describe a simulation state: every ack silently zeroed it on the client,
+     * which would let a replayed step take a collision branch the server never
+     * took. FOverlaneVehicleSimState has seven fields and the ack must carry all
+     * seven - which is why the conversion lives here rather than being open-coded
+     * at the two call sites where a field is easy to forget.
+     */
+    UPROPERTY()
+    uint8 CollisionCutCooldownQ = 0;
+
     /** b0 BoostActive, b1 DrivingAllowed, b2 InputStarved, b3 ForceSnap. */
     UPROPERTY()
     uint8 Flags = 0;
+
+    static constexpr uint8 Flag_BoostActive = 0x01;
+    static constexpr uint8 Flag_DrivingAllowed = 0x02;
+    static constexpr uint8 Flag_InputStarved = 0x04;
+    static constexpr uint8 Flag_ForceSnap = 0x08;
+
+    void FromSimState(const FOverlaneVehicleSimState& State, uint16 InSequence, float CooldownDuration)
+    {
+        Sequence = InSequence;
+        Location = State.Location;
+        YawQ = static_cast<uint16>(FMath::RoundToInt(FRotator::ClampAxis(State.Yaw) * (65536.0f / 360.0f)) & 0xFFFF);
+        SpeedCms = static_cast<int16>(FMath::Clamp(FMath::RoundToInt(State.CurrentSpeed), -32000, 32000));
+        BoostChargeQ = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(State.BoostCharge, 0.0f, 1.0f) * 255.0f));
+        CollisionCutCooldownQ = static_cast<uint8>(FMath::RoundToInt(
+            FMath::Clamp(State.CollisionCutCooldown / FMath::Max(CooldownDuration, KINDA_SMALL_NUMBER), 0.0f, 1.0f) * 255.0f));
+        CollisionEventCount = State.CollisionEventCount;
+    }
+
+    FOverlaneVehicleSimState ToSimState(float CooldownDuration) const
+    {
+        FOverlaneVehicleSimState State;
+        State.Location = Location;
+        State.Yaw = YawQ * (360.0f / 65536.0f);
+        State.CurrentSpeed = static_cast<float>(SpeedCms);
+        State.BoostCharge = BoostChargeQ * (1.0f / 255.0f);
+        State.CollisionCutCooldown = (CollisionCutCooldownQ * (1.0f / 255.0f)) * CooldownDuration;
+        State.CollisionEventCount = CollisionEventCount;
+        State.bBoostActive = (Flags & Flag_BoostActive) != 0;
+        return State;
+    }
 };
 
 /** Owning client to server: every command the client has not seen acked yet. */

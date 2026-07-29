@@ -76,6 +76,10 @@ private:
     /** Server side: the highest sequence accepted from this client so far. */
     uint16 LastAcceptedSequence = 0;
 
+    /** Server side: token bucket so a client cannot buy extra simulated steps. */
+    float CommandTokens = 0.0f;
+    float LastBatchTime = 0.0f;
+
     /** Server side: world time of the last granted recovery, for the cooldown. */
     float LastRecoveryTime = -1000.0f;
 

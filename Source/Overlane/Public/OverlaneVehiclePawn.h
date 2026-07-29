@@ -236,5 +236,9 @@ private:
     UPROPERTY(ReplicatedUsing = OnRep_ServerMoveAck)
     FOverlaneMoveAck ServerMoveAck;
 
+    /** Sticky ack bits, held until the client echoes the matching epoch back. */
+    uint8 PendingAckFlags = 0;
+    uint8 CorrectionEpoch = 0;
+
     FTransform RecoveryTransform;
 };

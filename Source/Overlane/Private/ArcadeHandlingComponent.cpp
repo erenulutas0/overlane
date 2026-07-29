@@ -84,7 +84,11 @@ bool UArcadeHandlingComponent::IsDrivingAllowedHere() const
         return RaceState->IsRaceActive() && !RaceState->IsRacePaused();
     }
 
-    return true;
+    // A machine that can see neither the game mode nor the game state does not
+    // know whether the race is running, and must not simulate on a guess. This
+    // used to return true, which was harmless only while clients never
+    // simulated - and stops being harmless the moment prediction is enabled.
+    return false;
 }
 
 bool UArcadeHandlingComponent::ShouldSimulateHere() const
@@ -131,12 +135,19 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 
     if (!IsDrivingAllowedHere())
     {
-        bBoostActive = false;
-        // Do not bank paused time, or the race resumes with a burst of catch-up
-        // steps. Same for queued input: a client that keeps sending through a
-        // pause must not be able to cash the backlog in the moment it lifts.
+        // Dropping paused time is correct and symmetric: both machines do it.
         StepAccumulator = 0.0f;
-        PendingCommands.Reset();
+
+        // Clearing the queue is NOT symmetric - it is the server discarding a
+        // client's input, so it must only happen where the queue lives. Doing it
+        // on the predicting client would silently delete its own unsimulated
+        // commands and desynchronise the two sequence counters.
+        if (ShouldSimulateHere())
+        {
+            bBoostActive = false;
+            PendingCommands.Reset();
+            StarveDebt = 0;
+        }
         return;
     }
 
@@ -163,50 +174,76 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
         ++Steps;
     }
 
-    if (Steps >= OverlaneMaxStepsPerFrame)
-    {
-        // Drop the backlog rather than spiral: catching up is worse than a hitch.
-        StepAccumulator = 0.0f;
-    }
-
-    // A latency spike leaves a deep jitter queue. Run a couple of extra steps
-    // beyond real time so we do not stay permanently behind the client's input.
-    // These are in order, after the normal steps, so causality is preserved.
-    int32 CatchUpSteps = 0;
-    while (PendingCommands.Num() > 8 && CatchUpSteps < 2)
-    {
-        FOverlaneInputCommand CatchUpCommand;
-        if (!ConsumeNextCommand(CatchUpCommand))
-        {
-            break;
-        }
-
-        SimulateStep(CatchUpCommand, OverlaneFixedDeltaSeconds, EOverlaneStepMode::Live);
-        ++CatchUpSteps;
-    }
+    // The accumulator remainder is deliberately KEPT.
+    //
+    // Zeroing it here, plus a catch-up loop that ran two extra steps PER FRAME
+    // without debiting the accumulator, meant the server simulated more than
+    // 60 steps per wall second whenever a client's input stuttered - 180/s at a
+    // 60 fps host. Since the winner is decided purely from world X, the jitterier
+    // connection was literally being handed free distance. The queue depth is now
+    // absorbed by the starvation debt in ConsumeNextCommand instead, which keeps
+    // simulated steps and wall-clock steps exactly equal.
 }
 
 void UArcadeHandlingComponent::EnqueueCommand(const FOverlaneInputCommand& Command)
 {
     bCommandDriven = true;
 
-    // Bound the queue: a client that floods or reconnects must not be able to
-    // bank an arbitrary amount of future input.
-    if (PendingCommands.Num() >= OverlaneMoveRingSize)
-    {
-        PendingCommands.RemoveAt(0, PendingCommands.Num() - OverlaneMoveRingSize + 1, EAllowShrinking::No);
-    }
-
     PendingCommands.Add(Command);
+
+    // Bound the queue. Dropping only the single oldest command left the queue
+    // pinned at the cap and silently skipped one command per push, which is a
+    // discontinuity in the consumed sequence that the client would never learn
+    // about. Trim back to the jitter target and raise a force-snap instead: an
+    // announced discontinuity is recoverable, a silent one is not.
+    if (PendingCommands.Num() > OverlaneMoveRingSize)
+    {
+        const int32 Excess = PendingCommands.Num() - ServerBufferTarget;
+        PendingCommands.RemoveAt(0, Excess, EAllowShrinking::No);
+        StarveDebt = 0;
+        bPendingForceSnap = true;
+    }
 }
 
 void UArcadeHandlingComponent::ClearPendingCommands()
 {
     PendingCommands.Reset();
+    StarveDebt = 0;
+    bPendingForceSnap = true;
+}
+
+bool UArcadeHandlingComponent::ConsumePendingForceSnap()
+{
+    const bool bWasPending = bPendingForceSnap;
+    bPendingForceSnap = false;
+    return bWasPending;
 }
 
 bool UArcadeHandlingComponent::ConsumeNextCommand(FOverlaneInputCommand& OutCommand)
 {
+    if (!bCommandDriven)
+    {
+        // Locally driven: standalone, or the listen-server host's own pawn.
+        OutCommand = FOverlaneInputCommand::Make(
+            LocalCommandSequence++, ThrottleInput, BrakeInput, SteeringInput, bBoostRequested);
+        return true;
+    }
+
+    // Pay off starvation debt before simulating anything new.
+    //
+    // When the queue ran dry we repeated the last command AND simulated a full
+    // step for it. Simulating the real command later as well would spend two
+    // steps on one command, which is the ratchet that let a stuttering client
+    // accumulate free distance. Each repeated step is now recorded as a debt and
+    // the matching command is retired without being simulated again.
+    while (StarveDebt > 0 && PendingCommands.Num() > 0)
+    {
+        LastConsumedCommand = PendingCommands[0];
+        LastConsumedSequence = LastConsumedCommand.Sequence;
+        PendingCommands.RemoveAt(0, 1, EAllowShrinking::No);
+        --StarveDebt;
+    }
+
     if (PendingCommands.Num() > 0)
     {
         OutCommand = PendingCommands[0];
@@ -217,19 +254,20 @@ bool UArcadeHandlingComponent::ConsumeNextCommand(FOverlaneInputCommand& OutComm
         return true;
     }
 
-    if (bCommandDriven)
+    // The client has gone quiet. Repeat its last known intent rather than
+    // inventing one, and remember that we did.
+    if (StarveDebt < MaxStarveDebtSteps)
     {
-        // The client has gone quiet. Repeat its last known intent rather than
-        // inventing one; the starvation flag lets the ack tell it so.
         OutCommand = LastConsumedCommand;
         bInputStarved = true;
+        ++StarveDebt;
         return true;
     }
 
-    // Locally driven: standalone, or the listen-server host's own pawn.
-    OutCommand = FOverlaneInputCommand::Make(
-        LocalCommandSequence++, ThrottleInput, BrakeInput, SteeringInput, bBoostRequested);
-    return true;
+    // Silent for long enough that guessing is worse than holding still. Refusing
+    // to simulate keeps the acked sequence and the acked state in step.
+    bInputStarved = true;
+    return false;
 }
 
 void UArcadeHandlingComponent::SimulateStep(const FOverlaneInputCommand& Command, float FixedDt, EOverlaneStepMode Mode)
@@ -244,10 +282,14 @@ void UArcadeHandlingComponent::SimulateStep(const FOverlaneInputCommand& Command
     const float StepBrake = Command.GetBrake();
     const float StepSteering = Command.GetSteering();
 
+    // 0.01 rather than KINDA_SMALL_NUMBER: BoostCharge is quantised to 8 bits on
+    // the wire, so an LSB of 1/255 straddling this threshold would let the client
+    // and the server disagree about a discrete branch that swings the speed cap
+    // by 1800 cm/s.
     bBoostActive = Command.IsBoostRequested()
         && StepThrottle > KINDA_SMALL_NUMBER
         && CurrentSpeed >= BoostMinimumSpeed
-        && BoostCharge > KINDA_SMALL_NUMBER;
+        && BoostCharge > 0.01f;
 
     if (bBoostActive)
     {

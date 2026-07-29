@@ -262,16 +262,30 @@ void AOverlaneVehiclePawn::Tick(float DeltaSeconds)
         ReplicatedBoostCharge = ArcadeHandling->GetBoostChargeRatio();
         bReplicatedBoostActive = ArcadeHandling->IsBoostActive();
 
+        // One converter, so a field cannot be forgotten at a call site.
         const FOverlaneVehicleSimState SimState = ArcadeHandling->GetSimState();
-        ServerMoveAck.Sequence = ArcadeHandling->GetLastConsumedSequence();
-        ServerMoveAck.Location = SimState.Location;
-        ServerMoveAck.YawQ = static_cast<uint16>(FMath::RoundToInt(FRotator::ClampAxis(SimState.Yaw) * (65536.0f / 360.0f))) & 0xFFFF;
-        ServerMoveAck.SpeedCms = static_cast<int16>(FMath::Clamp(SimState.CurrentSpeed, -32000.0f, 32000.0f));
-        ServerMoveAck.BoostChargeQ = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(SimState.BoostCharge, 0.0f, 1.0f) * 255.0f));
-        ServerMoveAck.CollisionEventCount = SimState.CollisionEventCount;
-        ServerMoveAck.Flags =
-            (SimState.bBoostActive ? 0x01 : 0x00) |
-            (ArcadeHandling->IsInputStarved() ? 0x04 : 0x00);
+        ServerMoveAck.FromSimState(
+            SimState, ArcadeHandling->GetLastConsumedSequence(), ArcadeHandling->GetCollisionCutCooldownDuration());
+
+        if (ArcadeHandling->ConsumePendingForceSnap())
+        {
+            ++CorrectionEpoch;
+            PendingAckFlags |= FOverlaneMoveAck::Flag_ForceSnap;
+        }
+
+        const AOverlaneGameModeBase* AckGameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AOverlaneGameModeBase>() : nullptr;
+
+        // Live bits are rebuilt every tick; sticky bits survive until the client
+        // echoes the epoch back. Rebuilding the whole byte meant a force-snap
+        // raised on one tick was overwritten on the next and never reached the
+        // wire at all.
+        const uint8 LiveFlags =
+            (SimState.bBoostActive ? FOverlaneMoveAck::Flag_BoostActive : 0) |
+            (ArcadeHandling->IsInputStarved() ? FOverlaneMoveAck::Flag_InputStarved : 0) |
+            ((!AckGameMode || AckGameMode->IsDrivingAllowed()) ? FOverlaneMoveAck::Flag_DrivingAllowed : 0);
+
+        ServerMoveAck.Flags = LiveFlags | PendingAckFlags;
+        ServerMoveAck.CorrectionEpoch = CorrectionEpoch;
     }
 
     if (HasServerGhost() && IsCorrectionDebugEnabled())
@@ -435,15 +449,7 @@ void AOverlaneVehiclePawn::OnRep_ServerMoveAck()
     // Deliberately still a hard snap, exactly as the old transform channel was.
     // This step only swaps the wire format, so a replication break can be told
     // apart from a feel change. Replay and smoothing arrive in N-008.
-    FOverlaneVehicleSimState SimState;
-    SimState.Location = ServerMoveAck.Location;
-    SimState.Yaw = ServerMoveAck.YawQ * (360.0f / 65536.0f);
-    SimState.CurrentSpeed = static_cast<float>(ServerMoveAck.SpeedCms);
-    SimState.BoostCharge = ServerMoveAck.BoostChargeQ * (1.0f / 255.0f);
-    SimState.CollisionEventCount = ServerMoveAck.CollisionEventCount;
-    SimState.bBoostActive = (ServerMoveAck.Flags & 0x01) != 0;
-
-    ArcadeHandling->SetSimState(SimState);
+    ArcadeHandling->SetSimState(ServerMoveAck.ToSimState(ArcadeHandling->GetCollisionCutCooldownDuration()));
 }
 
 void AOverlaneVehiclePawn::SetAIRacer(bool bInIsAIRacer)

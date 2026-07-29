@@ -208,10 +208,9 @@ void AOverlanePlayerController::TickLocalCommandStream(float DeltaSeconds)
         ++Generated;
     }
 
-    if (Generated >= OverlaneMaxStepsPerFrame)
-    {
-        CommandAccumulator = 0.0f;
-    }
+    // The remainder is deliberately kept, matching the server's accumulator.
+    // Zeroing it on one side and not the other is exactly the asymmetry that
+    // makes two machines disagree about how many steps a second contained.
 
     // Until reconciliation lands there is no ack channel, so the window is simply
     // capped: the newest 12 commands are 200 ms of redundancy, which is what a
@@ -221,10 +220,13 @@ void AOverlanePlayerController::TickLocalCommandStream(float DeltaSeconds)
         UnackedCommands.RemoveAt(0, UnackedCommands.Num() - OverlaneMaxBatchCommands, EAllowShrinking::No);
     }
 
+    // Subtract rather than zero, or the send rate is quantised to the frame rate
+    // and is never actually the 30 Hz it claims to be.
     SendAccumulator += DeltaSeconds;
-    if (SendAccumulator >= (1.0f / 30.0f))
+    const float SendInterval = 1.0f / 30.0f;
+    if (SendAccumulator >= SendInterval)
     {
-        SendAccumulator = 0.0f;
+        SendAccumulator = FMath::Min(SendAccumulator - SendInterval, SendInterval);
         SendMoveBatch();
     }
 }
@@ -250,10 +252,14 @@ bool AOverlanePlayerController::ServerSendMoveBatch_Validate(const FOverlaneMove
 void AOverlanePlayerController::ServerSendMoveBatch_Implementation(const FOverlaneMoveBatch& Batch)
 {
     AOverlaneVehiclePawn* VehiclePawn = Cast<AOverlaneVehiclePawn>(GetPawn());
-    if (!VehiclePawn)
-    {
-        return;
-    }
+
+    // Refill a token bucket so a client cannot buy extra simulated steps by
+    // sending faster. 60 tokens per second is exactly the honest rate; the burst
+    // of 4 absorbs normal packet clumping.
+    const float Now = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+    const float Elapsed = FMath::Max(0.0f, Now - LastBatchTime);
+    LastBatchTime = Now;
+    CommandTokens = FMath::Min(CommandTokens + (Elapsed / OverlaneFixedDeltaSeconds), 4.0f + (1.0f / OverlaneFixedDeltaSeconds));
 
     for (const FOverlaneInputCommand& Command : Batch.Commands)
     {
@@ -265,6 +271,15 @@ void AOverlanePlayerController::ServerSendMoveBatch_Implementation(const FOverla
             continue;   // already have it: this is the redundancy doing its job
         }
 
+        // Advance the accepted sequence even with no pawn. Not doing so meant the
+        // pawnless window during travel or respawn made every subsequent batch
+        // look implausibly far ahead and manufactured a resync on every client.
+        if (!VehiclePawn)
+        {
+            LastAcceptedSequence = Command.Sequence;
+            continue;
+        }
+
         if (Delta > 24)
         {
             // Implausibly far ahead. Resynchronise rather than banking a burst
@@ -273,6 +288,15 @@ void AOverlanePlayerController::ServerSendMoveBatch_Implementation(const FOverla
             LastAcceptedSequence = static_cast<uint16>(Command.Sequence - 1);
         }
 
+        if (CommandTokens < 1.0f)
+        {
+            // Over budget: accept the sequence so the stream stays in step, but
+            // do not hand the client a step it has not earned in wall time.
+            LastAcceptedSequence = Command.Sequence;
+            continue;
+        }
+
+        CommandTokens -= 1.0f;
         VehiclePawn->EnqueueInputCommand(Command);
         LastAcceptedSequence = Command.Sequence;
     }

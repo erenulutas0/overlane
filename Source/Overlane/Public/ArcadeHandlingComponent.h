@@ -67,6 +67,10 @@ public:
     uint16 GetLastConsumedSequence() const { return LastConsumedSequence; }
     bool IsInputStarved() const { return bInputStarved; }
     void ClearPendingCommands();
+    float GetCollisionCutCooldownDuration() const { return CollisionCutCooldownDuration; }
+
+    /** True once if the queue overflowed and the command stream jumped. */
+    bool ConsumePendingForceSnap();
     float GetBoostChargeRatio() const { return BoostCharge; }
     bool IsBoostActive() const { return bBoostActive; }
 
@@ -138,8 +142,19 @@ private:
     TArray<FOverlaneInputCommand> PendingCommands;
     FOverlaneInputCommand LastConsumedCommand;
     uint16 LastConsumedSequence = 0;
+
+    /** Steps simulated from a repeated command, owed back when input resumes. */
+    int32 StarveDebt = 0;
+
+    /** 0.5 s of repeats; past this, hold rather than keep guessing. */
+    static constexpr int32 MaxStarveDebtSteps = 30;
+
+    /** Queue depth kept as jitter absorption when trimming an overflow. */
+    static constexpr int32 ServerBufferTarget = 2;
+
     bool bCommandDriven = false;
     bool bInputStarved = false;
+    bool bPendingForceSnap = false;
 
     float ThrottleInput = 0.0f;
     float BrakeInput = 0.0f;
