@@ -140,8 +140,22 @@ private:
     float LaneCompleteHeadingToleranceDegrees = 3.5f;
 
     // --- Overtaking ----------------------------------------------------------
+    /**
+     * How long the rival must be held below cruise before it looks for a way out.
+     *
+     * With the old 0.6 s plus a 2.0 s post-merge cooldown and a ~1.6 s merge, one
+     * overtake cost at least 4.2 s - a hard ceiling of about 27 passes over a
+     * two-minute route, and the rival was measured completing 20. The binding
+     * constraint had moved from "cannot merge" to "cannot merge often enough".
+     */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
-    float BlockedTimeToOvertake = 0.6f;
+    float BlockedTimeToOvertake = 0.35f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
+    float PostMergeCooldown = 0.9f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
+    float AbortedMergeCooldown = 1.2f;
 
     /**
      * How much faster the candidate lane must let the bot go, in cm/s.

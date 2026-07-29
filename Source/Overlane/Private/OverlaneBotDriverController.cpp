@@ -56,11 +56,23 @@ void AOverlaneBotDriverController::ConfigureDifficulty(int32 Difficulty)
         DifficultySpeedScale = 0.88f;
         bAllowBoost = false;
         RubberBandStrength = 0.10f;
+
+        // An easy rival hesitates and leaves more room, which is what makes it
+        // beatable without simply making it slow.
+        BlockedTimeToOvertake = 0.7f;
+        PostMergeCooldown = 1.8f;
         break;
     case 2:
         DifficultySpeedScale = 1.0f;
         bAllowBoost = true;
         RubberBandStrength = 0.03f;
+
+        // Difficulty as SKILL, not as a speed multiplier: a hard rival commits to
+        // gaps sooner, recovers between passes faster, and accepts less margin.
+        BlockedTimeToOvertake = 0.22f;
+        PostMergeCooldown = 0.6f;
+        MergeBufferAhead = 180.0f;
+        MergeBufferBehind = 110.0f;
         break;
     default:
         DifficultySpeedScale = 1.0f;
@@ -439,12 +451,12 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
             TrackedLaneDistance = FMath::Clamp(ReseedDistance, TrackedLaneDistance - 400.0f, TrackedLaneDistance + 400.0f);
 
             ++MergesCompleted;
-            LaneChangeCooldown = 2.0f;
+            LaneChangeCooldown = PostMergeCooldown;
         }
         else if (LaneChangeElapsed > LaneChangeTimeout)
         {
             TargetLaneIndex = CurrentLaneIndex;
-            LaneChangeCooldown = 1.5f;
+            LaneChangeCooldown = AbortedMergeCooldown;
         }
     }
 

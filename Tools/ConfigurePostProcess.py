@@ -95,10 +95,15 @@ def configure_volume(volume):
         settings.set_editor_property(flag, True)
         settings.set_editor_property(name, unreal.Vector4(r, g, b, 1.0))
 
-    # --- Exposure: manual, so the image never pumps -------------------------
-    settings.set_editor_property("override_auto_exposure_method", True)
-    settings.set_editor_property("auto_exposure_method", unreal.AutoExposureMethod.AEM_MANUAL)
-    scalar("override_auto_exposure_bias", "auto_exposure_bias", 0.0)
+    # --- Exposure: DELIBERATELY NOT OVERRIDDEN ------------------------------
+    #
+    # Manual metering was tried and reverted. It hands exposure to the camera's
+    # shutter/ISO/aperture defaults, which for this scene produced a nearly black
+    # image. The scene was correctly exposed before anything touched it, and the
+    # "exposure pumping" this was meant to solve was a theoretical concern rather
+    # than an observed one. If pumping does become a real problem, the right fix
+    # is to clamp the auto-exposure min and max brightness to the same value,
+    # which keeps the engine's own units, not to switch metering mode.
 
     # --- Filmic tonemapper --------------------------------------------------
     # Toe is the important one: the default crushes asphalt into mud.
