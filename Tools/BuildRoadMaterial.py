@@ -219,9 +219,12 @@ def build_material(textures):
     link(base_sample, "RGB", tinted, "A")
     link(macro_range, "", tinted, "B")
 
+    # Slightly cool and slightly dark rather than pure white. A warm low sun plus
+    # Lumen bounce off the roadside pushes asphalt toward brown, and asphalt that
+    # reads as dirt is worse than asphalt that reads a touch cold.
     tint = make(material, unreal.MaterialExpressionVectorParameter, -1000, -420)
     tint.set_editor_property("parameter_name", "Tint")
-    tint.set_editor_property("default_value", unreal.LinearColor(1.0, 1.0, 1.0, 1.0))
+    tint.set_editor_property("default_value", unreal.LinearColor(0.80, 0.84, 0.92, 1.0))
     tint.set_editor_property("group", "Surface")
 
     base_color = make(material, unreal.MaterialExpressionMultiply, -420, -300)

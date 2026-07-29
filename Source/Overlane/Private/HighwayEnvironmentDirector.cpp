@@ -276,7 +276,14 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
 
     const float VisualRouteLength = RouteLength + (VisualRouteOverscan * 2.0f);
 
-    UMaterialInstanceDynamic* TerrainMaterial = CreateSurfaceMaterial(TerrainSurfaceMaterial, FLinearColor(0.18f, 0.22f, 0.11f));
+    // Darker and less yellow than it was.
+    //
+    // Under Lumen this surface is the largest thing next to the road, so its
+    // albedo is bounced straight onto the asphalt. At 0.18/0.22/0.11 with a warm
+    // low sun it was tinting the road brown and making it read as dirt rather
+    // than asphalt - a problem that did not exist before global illumination was
+    // enabled, because before that nothing bounced at all.
+    UMaterialInstanceDynamic* TerrainMaterial = CreateSurfaceMaterial(TerrainSurfaceMaterial, FLinearColor(0.085f, 0.115f, 0.06f));
     UMaterialInstanceDynamic* AsphaltMaterial = CreateSurfaceMaterial(RoadSurfaceMaterial, FLinearColor(0.025f, 0.03f, 0.045f));
     UMaterialInstanceDynamic* ShoulderMaterial = CreateSurfaceMaterial(ShoulderSurfaceMaterial, FLinearColor(0.09f, 0.10f, 0.12f));
     UMaterialInstanceDynamic* RailMaterial = CreateSurfaceMaterial(MetalSurfaceMaterial, FLinearColor(0.18f, 0.23f, 0.28f));
