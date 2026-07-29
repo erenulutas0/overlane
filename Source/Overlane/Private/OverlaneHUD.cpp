@@ -342,12 +342,22 @@ void AOverlaneHUD::DrawHUD()
     // precisely where the prediction error needs to be readable.
     if (VehiclePawn->HasServerGhost() && AOverlaneVehiclePawn::IsCorrectionDebugEnabled())
     {
+        // Both numbers, labelled distinctly and on purpose. LAG is the client's
+        // legitimate lead over the server and SHOULD be large and grow with ping.
+        // ERR is the reconciliation error for the SAME sequence and should be
+        // near zero. Showing only one of them means a tester reads the wrong one
+        // and derives a correction threshold from a number that is not an error.
+        const FOverlaneReconcileSample& Sample = VehiclePawn->GetLastReconcileSample();
         const FString NetDebugText = FString::Printf(
-            TEXT("NET  ILERI %+.0f cm  YANAL %+.0f cm  YAW %+.1f  ACK %u"),
-            VehiclePawn->GetPredictionErrorLongitudinalCm(),
-            VehiclePawn->GetPredictionErrorLateralCm(),
-            VehiclePawn->GetPredictionErrorYawDegrees(),
-            VehiclePawn->GetAckedSequence());
+            TEXT("NET  LAG %+.0f cm   ERR %+.1f / %+.1f cm  YAW %+.3f  HIZ %+.1f  DERINLIK %d  ACK %d  KACAK %d"),
+            VehiclePawn->GetServerLagLongitudinalCm(),
+            Sample.ErrorLongitudinalCm,
+            Sample.ErrorLateralCm,
+            Sample.ErrorYawDegrees,
+            Sample.ErrorSpeedCms,
+            Sample.UnackedDepth,
+            VehiclePawn->GetAckCount(),
+            VehiclePawn->GetRingMissCount());
         FCanvasTextItem NetDebugItem(FVector2D(48.0f, Canvas->ClipY - 76.0f), FText::FromString(NetDebugText), GEngine->GetSmallFont(), FLinearColor(0.4f, 0.85f, 1.0f));
         NetDebugItem.EnableShadow(FLinearColor::Black);
         Canvas->DrawItem(NetDebugItem);

@@ -5,6 +5,21 @@
 #include "OverlaneGameModeBase.h"
 #include "OverlaneRaceGameState.h"
 
+namespace
+{
+    /**
+     * 0 restores today's behaviour bit for bit: the client never simulates and
+     * OnRep hard-snaps. Every step of this rework stays reversible with one
+     * console variable, because a feel regression that cannot be switched off is
+     * a feel regression that cannot be diagnosed.
+     */
+    static TAutoConsoleVariable<int32> CVarPredictLocalVehicle(
+        TEXT("overlane.Net.Predict"),
+        0,
+        TEXT("1: the owning client simulates its own vehicle. 0: pure echo of the server."),
+        ECVF_Default);
+}
+
 UArcadeHandlingComponent::UArcadeHandlingComponent()
 {
     PrimaryComponentTick.bCanEverTick = true;
@@ -94,7 +109,87 @@ bool UArcadeHandlingComponent::IsDrivingAllowedHere() const
 bool UArcadeHandlingComponent::ShouldSimulateHere() const
 {
     const APawn* VehiclePawn = Cast<APawn>(GetOwner());
-    return VehiclePawn && (VehiclePawn->HasAuthority() || VehiclePawn->GetNetMode() == NM_Standalone);
+    if (!VehiclePawn)
+    {
+        return false;
+    }
+
+    if (VehiclePawn->HasAuthority() || VehiclePawn->GetNetMode() == NM_Standalone)
+    {
+        return true;
+    }
+
+    return IsPredictingHere();
+}
+
+bool UArcadeHandlingComponent::IsPredictingHere() const
+{
+    const APawn* VehiclePawn = Cast<APawn>(GetOwner());
+    return bPredictEnabledThisFrame
+        && VehiclePawn
+        && !VehiclePawn->HasAuthority()
+        && VehiclePawn->IsLocallyControlled()
+        && VehiclePawn->GetLocalRole() == ROLE_AutonomousProxy;
+}
+
+void UArcadeHandlingComponent::StorePredictedMove(const FOverlaneInputCommand& Command, bool bBlocked)
+{
+    if (MoveRing.Num() != OverlaneMoveRingSize)
+    {
+        MoveRing.SetNum(OverlaneMoveRingSize);
+    }
+
+    FOverlanePredictedMove& Slot = MoveRing[Command.Sequence % OverlaneMoveRingSize];
+    Slot.Command = Command;
+    Slot.StateAfter = GetSimState();
+    Slot.Sequence = Command.Sequence;
+    Slot.bValid = true;
+    Slot.bBlocked = bBlocked;
+}
+
+const FOverlanePredictedMove* UArcadeHandlingComponent::FindPredictedMove(uint16 Sequence) const
+{
+    if (MoveRing.Num() != OverlaneMoveRingSize)
+    {
+        return nullptr;
+    }
+
+    const FOverlanePredictedMove& Slot = MoveRing[Sequence % OverlaneMoveRingSize];
+
+    // The stored sequence is checked, not assumed: after a wrap two different
+    // sequences share an index and comparing against the wrong one would report
+    // a large error that is entirely fictional.
+    return (Slot.bValid && Slot.Sequence == Sequence) ? &Slot : nullptr;
+}
+
+int32 UArcadeHandlingComponent::CountMovesAfter(uint16 Sequence) const
+{
+    const int32 Delta = static_cast<int16>(NextPredictedSequence - Sequence) - 1;
+    return FMath::Clamp(Delta, 0, OverlaneMoveRingSize);
+}
+
+void UArcadeHandlingComponent::ResetPredictionTo(uint16 Sequence, const FOverlaneVehicleSimState& State)
+{
+    SetSimState(State);
+
+    for (FOverlanePredictedMove& Slot : MoveRing)
+    {
+        Slot.bValid = false;
+    }
+
+    // Resume numbering after the sequence the server has confirmed, so the next
+    // ack can be matched. Sequence 0 is reserved as "none".
+    NextPredictedSequence = static_cast<uint16>(Sequence + 1);
+    if (NextPredictedSequence == 0)
+    {
+        NextPredictedSequence = 1;
+    }
+}
+
+void UArcadeHandlingComponent::DrainPredictedOutbox(TArray<FOverlaneInputCommand>& OutCommands)
+{
+    OutCommands.Append(PredictedOutbox);
+    PredictedOutbox.Reset();
 }
 
 FOverlaneVehicleSimState UArcadeHandlingComponent::GetSimState() const
@@ -133,6 +228,9 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
 {
     Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+    // Read the console variable once per frame, never inside the step loop.
+    bPredictEnabledThisFrame = CVarPredictLocalVehicle.GetValueOnGameThread() != 0;
+
     if (!IsDrivingAllowedHere())
     {
         // Dropping paused time is correct and symmetric: both machines do it.
@@ -159,16 +257,37 @@ void UArcadeHandlingComponent::TickComponent(float DeltaTime, ELevelTick TickTyp
     // Clamp so a hitch, a breakpoint or a level load cannot produce a huge backlog.
     StepAccumulator += FMath::Min(DeltaTime, 0.25f);
 
+    const bool bPredicting = IsPredictingHere();
+
     int32 Steps = 0;
     while (StepAccumulator >= OverlaneFixedDeltaSeconds && Steps < OverlaneMaxStepsPerFrame)
     {
         FOverlaneInputCommand Command;
-        if (!ConsumeNextCommand(Command))
+
+        if (bPredicting)
+        {
+            // The predicting client owns its own numbering and never touches
+            // PendingCommands, which stays strictly server-side.
+            Command = FOverlaneInputCommand::Make(
+                NextPredictedSequence, ThrottleInput, BrakeInput, SteeringInput, bBoostRequested);
+
+            if (++NextPredictedSequence == 0)
+            {
+                NextPredictedSequence = 1;   // 0 is reserved as "no sequence"
+            }
+        }
+        else if (!ConsumeNextCommand(Command))
         {
             break;
         }
 
         SimulateStep(Command, OverlaneFixedDeltaSeconds, EOverlaneStepMode::Live);
+
+        if (bPredicting)
+        {
+            StorePredictedMove(Command, bLastStepBlocked);
+            PredictedOutbox.Add(Command);
+        }
 
         StepAccumulator -= OverlaneFixedDeltaSeconds;
         ++Steps;
@@ -339,6 +458,7 @@ void UArcadeHandlingComponent::SimulateStep(const FOverlaneInputCommand& Command
     FHitResult Hit;
     VehiclePawn->AddActorWorldOffset(VehiclePawn->GetActorForwardVector() * CurrentSpeed * FixedDt, true, &Hit);
 
+    bLastStepBlocked = Hit.bBlockingHit;
     CollisionCutCooldown = FMath::Max(0.0f, CollisionCutCooldown - FixedDt);
 
     // The sweep still blocks during a replay -- being stopped by a car that is

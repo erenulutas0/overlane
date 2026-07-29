@@ -446,10 +446,68 @@ void AOverlaneVehiclePawn::OnRep_ServerMoveAck()
         return;
     }
 
-    // Deliberately still a hard snap, exactly as the old transform channel was.
-    // This step only swaps the wire format, so a replication break can be told
-    // apart from a feel change. Replay and smoothing arrive in N-008.
-    ArcadeHandling->SetSimState(ServerMoveAck.ToSimState(ArcadeHandling->GetCollisionCutCooldownDuration()));
+    const float CooldownDuration = ArcadeHandling->GetCollisionCutCooldownDuration();
+    const FOverlaneVehicleSimState ServerState = ServerMoveAck.ToSimState(CooldownDuration);
+
+    if (!ArcadeHandling->IsPredictingHere())
+    {
+        // Prediction off: today's behaviour, bit for bit.
+        ArcadeHandling->SetSimState(ServerState);
+        return;
+    }
+
+    ++AckCount;
+
+    if (ServerMoveAck.Sequence == LastMeasuredSequence)
+    {
+        ++DuplicateAckCount;
+        return;
+    }
+
+    if (ServerMoveAck.CorrectionEpoch != LocalCorrectionEpoch)
+    {
+        // The server announced a discontinuity in the command stream. Nothing in
+        // the local history lines up with it any more.
+        ++EpochResetCount;
+        LocalCorrectionEpoch = ServerMoveAck.CorrectionEpoch;
+        ArcadeHandling->ResetPredictionTo(ServerMoveAck.Sequence, ServerState);
+        LastMeasuredSequence = ServerMoveAck.Sequence;
+        return;
+    }
+
+    const FOverlanePredictedMove* PredictedMove = ArcadeHandling->FindPredictedMove(ServerMoveAck.Sequence);
+    if (!PredictedMove)
+    {
+        ++RingMissCount;
+        ArcadeHandling->ResetPredictionTo(ServerMoveAck.Sequence, ServerState);
+        LastMeasuredSequence = ServerMoveAck.Sequence;
+        return;
+    }
+
+    // Measured in the SERVER's frame, not the client's. Using the client's yaw
+    // would let a heading disagreement contaminate the longitudinal/lateral
+    // split and make both numbers untrustworthy.
+    const FRotator ServerRotation(0.0f, ServerState.Yaw, 0.0f);
+    const FVector Difference = PredictedMove->StateAfter.Location - ServerState.Location;
+
+    FOverlaneReconcileSample Sample;
+    Sample.Sequence = ServerMoveAck.Sequence;
+    Sample.ErrorLongitudinalCm = FVector::DotProduct(Difference, ServerRotation.Vector());
+    Sample.ErrorLateralCm = FVector::DotProduct(Difference, FRotationMatrix(ServerRotation).GetScaledAxis(EAxis::Y));
+    Sample.ErrorYawDegrees = FMath::FindDeltaAngleDegrees(ServerState.Yaw, PredictedMove->StateAfter.Yaw);
+    Sample.ErrorSpeedCms = PredictedMove->StateAfter.CurrentSpeed - ServerState.CurrentSpeed;
+    Sample.CollisionEventDelta = static_cast<int8>(PredictedMove->StateAfter.CollisionEventCount - ServerState.CollisionEventCount);
+    Sample.UnackedDepth = ArcadeHandling->CountMovesAfter(ServerMoveAck.Sequence);
+    Sample.bServerWasStarved = (ServerMoveAck.Flags & FOverlaneMoveAck::Flag_InputStarved) != 0;
+
+    RecordReconcileSample(Sample);
+    LastMeasuredSequence = ServerMoveAck.Sequence;
+
+    // N-007 still hard-snaps. The history MUST be reset with it: leaving it
+    // intact would compare the next post-snap prediction against a pre-snap
+    // history and report pure noise. This is the part that makes "log only"
+    // harder than it sounds.
+    ArcadeHandling->ResetPredictionTo(ServerMoveAck.Sequence, ServerState);
 }
 
 void AOverlaneVehiclePawn::SetAIRacer(bool bInIsAIRacer)
@@ -484,22 +542,42 @@ FVector AOverlaneVehiclePawn::GetServerGhostLocation() const
     return ServerMoveAck.Location;
 }
 
-float AOverlaneVehiclePawn::GetPredictionErrorLongitudinalCm() const
+float AOverlaneVehiclePawn::GetServerLagLongitudinalCm() const
 {
-    // Along the car's own forward axis: this is the error the player feels as
-    // being ahead of or behind where the server thinks they are.
     return FVector::DotProduct(GetActorLocation() - FVector(ServerMoveAck.Location), GetActorForwardVector());
 }
 
-float AOverlaneVehiclePawn::GetPredictionErrorLateralCm() const
+float AOverlaneVehiclePawn::GetServerLagLateralCm() const
 {
     return FVector::DotProduct(GetActorLocation() - FVector(ServerMoveAck.Location), GetActorRightVector());
 }
 
-float AOverlaneVehiclePawn::GetPredictionErrorYawDegrees() const
+float AOverlaneVehiclePawn::GetServerLagYawDegrees() const
 {
     const float ServerYaw = ServerMoveAck.YawQ * (360.0f / 65536.0f);
     return FMath::FindDeltaAngleDegrees(ServerYaw, GetActorRotation().Yaw);
+}
+
+void AOverlaneVehiclePawn::RecordReconcileSample(const FOverlaneReconcileSample& Sample)
+{
+    LastReconcileSample = Sample;
+
+    UE_LOG(LogTemp, Verbose,
+        TEXT("[OverlaneNet] seq=%u depth=%d errLong=%.2f errLat=%.2f errYaw=%.4f errSpeed=%.2f dEvents=%d starved=%d"),
+        Sample.Sequence, Sample.UnackedDepth,
+        Sample.ErrorLongitudinalCm, Sample.ErrorLateralCm,
+        Sample.ErrorYawDegrees, Sample.ErrorSpeedCms,
+        Sample.CollisionEventDelta, Sample.bServerWasStarved ? 1 : 0);
+}
+
+bool AOverlaneVehiclePawn::IsPredicting() const
+{
+    return ArcadeHandling->IsPredictingHere();
+}
+
+void AOverlaneVehiclePawn::DrainPredictedCommands(TArray<FOverlaneInputCommand>& OutCommands)
+{
+    ArcadeHandling->DrainPredictedOutbox(OutCommands);
 }
 
 void AOverlaneVehiclePawn::EnqueueInputCommand(const FOverlaneInputCommand& Command)

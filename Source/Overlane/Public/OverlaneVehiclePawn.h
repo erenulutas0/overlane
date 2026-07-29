@@ -51,6 +51,9 @@ public:
     /** Signed forward speed in cm/s, the unit the traffic and bot logic use. */
     float GetForwardSpeedCms() const;
 
+    bool IsPredicting() const;
+    void DrainPredictedCommands(TArray<FOverlaneInputCommand>& OutCommands);
+
     /** Server-side: feed one command from a remote client's move batch. */
     void EnqueueInputCommand(const struct FOverlaneInputCommand& Command);
     void ClearPendingInputCommands();
@@ -65,9 +68,25 @@ public:
     static bool IsCorrectionDebugEnabled();
     bool HasServerGhost() const;
     FVector GetServerGhostLocation() const;
-    float GetPredictionErrorLongitudinalCm() const;
-    float GetPredictionErrorLateralCm() const;
-    float GetPredictionErrorYawDegrees() const;
+
+    /**
+     * How far this machine's CURRENT pose is from the server's acknowledged one.
+     *
+     * Named "lag", not "error", because that is what it is: under prediction this
+     * is the client's legitimate lead - one-way latency plus buffer depth, around
+     * 8 m at 100 ms RTT and 180 km/h - and it is correct behaviour. It was
+     * previously called a prediction error, which would have been read as a fault
+     * and would have made any threshold derived from it useless.
+     */
+    float GetServerLagLongitudinalCm() const;
+    float GetServerLagLateralCm() const;
+    float GetServerLagYawDegrees() const;
+
+    /** The real reconciliation error: client vs server, for the SAME sequence. */
+    const FOverlaneReconcileSample& GetLastReconcileSample() const { return LastReconcileSample; }
+    int32 GetAckCount() const { return AckCount; }
+    int32 GetRingMissCount() const { return RingMissCount; }
+
     uint16 GetAckedSequence() const { return ServerMoveAck.Sequence; }
 
     /** Scales top speed and acceleration. Only the AI rival moves this. */
@@ -239,6 +258,17 @@ private:
     /** Sticky ack bits, held until the client echoes the matching epoch back. */
     uint8 PendingAckFlags = 0;
     uint8 CorrectionEpoch = 0;
+
+    void RecordReconcileSample(const FOverlaneReconcileSample& Sample);
+
+    // --- Client-side reconciliation measurement (N-007, log only) ------------
+    FOverlaneReconcileSample LastReconcileSample;
+    uint16 LastMeasuredSequence = 0;
+    uint8 LocalCorrectionEpoch = 0;
+    int32 AckCount = 0;
+    int32 DuplicateAckCount = 0;
+    int32 RingMissCount = 0;
+    int32 EpochResetCount = 0;
 
     FTransform RecoveryTransform;
 };

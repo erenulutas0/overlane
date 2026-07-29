@@ -196,16 +196,29 @@ void AOverlanePlayerController::Tick(float DeltaSeconds)
 
 void AOverlanePlayerController::TickLocalCommandStream(float DeltaSeconds)
 {
-    CommandAccumulator += FMath::Min(DeltaSeconds, 0.25f);
+    AOverlaneVehiclePawn* VehiclePawn = Cast<AOverlaneVehiclePawn>(GetPawn());
 
-    int32 Generated = 0;
-    while (CommandAccumulator >= OverlaneFixedDeltaSeconds && Generated < OverlaneMaxStepsPerFrame)
+    // When prediction is on, the handling component already generated and
+    // simulated this frame's commands on its own accumulator. Generating a second
+    // stream here would give the client two different sequence spaces for the
+    // same inputs and make the ack unmatchable.
+    if (VehiclePawn && VehiclePawn->IsPredicting())
     {
-        UnackedCommands.Add(FOverlaneInputCommand::Make(
-            NextCommandSequence++, CachedThrottleInput, CachedBrakeInput, CachedSteeringInput, bCachedBoostInput));
+        VehiclePawn->DrainPredictedCommands(UnackedCommands);
+    }
+    else
+    {
+        CommandAccumulator += FMath::Min(DeltaSeconds, 0.25f);
 
-        CommandAccumulator -= OverlaneFixedDeltaSeconds;
-        ++Generated;
+        int32 Generated = 0;
+        while (CommandAccumulator >= OverlaneFixedDeltaSeconds && Generated < OverlaneMaxStepsPerFrame)
+        {
+            UnackedCommands.Add(FOverlaneInputCommand::Make(
+                NextCommandSequence++, CachedThrottleInput, CachedBrakeInput, CachedSteeringInput, bCachedBoostInput));
+
+            CommandAccumulator -= OverlaneFixedDeltaSeconds;
+            ++Generated;
+        }
     }
 
     // The remainder is deliberately kept, matching the server's accumulator.

@@ -191,6 +191,73 @@ struct FOverlaneMoveAck
     }
 };
 
+/**
+ * One predicted step, kept so the client can compare its own result for a given
+ * sequence against the server's result for that same sequence.
+ *
+ * This comparison is the whole point. Comparing the client's CURRENT pose against
+ * the server's acknowledged pose measures something entirely different - the
+ * client's legitimate lead, which is one-way latency plus buffer depth and is
+ * around 8 m at 100 ms RTT. Sizing a correction threshold against that number
+ * would mean never correcting anything.
+ */
+USTRUCT()
+struct FOverlanePredictedMove
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    FOverlaneInputCommand Command;
+
+    /** Unquantised, all seven fields, as the client computed them. */
+    UPROPERTY()
+    FOverlaneVehicleSimState StateAfter;
+
+    /** Stored so a ring-index collision after a wrap is detectable. */
+    UPROPERTY()
+    uint16 Sequence = 0;
+
+    UPROPERTY()
+    bool bValid = false;
+
+    /** The live sweep blocked this step. Unused until replay needs it. */
+    UPROPERTY()
+    bool bBlocked = false;
+};
+
+/** One reconciliation measurement, in the SERVER's frame of reference. */
+USTRUCT()
+struct FOverlaneReconcileSample
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    uint16 Sequence = 0;
+
+    UPROPERTY()
+    float ErrorLongitudinalCm = 0.0f;
+
+    UPROPERTY()
+    float ErrorLateralCm = 0.0f;
+
+    UPROPERTY()
+    float ErrorYawDegrees = 0.0f;
+
+    UPROPERTY()
+    float ErrorSpeedCms = 0.0f;
+
+    /** Client minus server collision-event count across this step. */
+    UPROPERTY()
+    int32 CollisionEventDelta = 0;
+
+    /** How many predicted moves are still unacknowledged. */
+    UPROPERTY()
+    int32 UnackedDepth = 0;
+
+    UPROPERTY()
+    bool bServerWasStarved = false;
+};
+
 /** Owning client to server: every command the client has not seen acked yet. */
 USTRUCT()
 struct FOverlaneMoveBatch

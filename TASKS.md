@@ -87,7 +87,7 @@ a replicated lane speed. Full plan and rationale in `DECISIONS.md`.
 | N-004 | in verification | Wire-format swap, behaviour neutral | N-002 | `FOverlaneMoveAck` replaces `OwnerServerTransform`; no behaviour change, so a replication break is diagnosable in isolation. |
 | N-005 | done | Correction debug overlay / server ghost | N-004 | `overlane.Net.DrawCorrection` draws the server pose and the error magnitude. Ships before any enforcement. |
 | N-006 | in verification | Authority hygiene | N-004 | Client control RPCs for pause/restart/menu; `ReturnToMainMenu` uses server travel on a listen server. A joined client's only exit today is Alt+F4. |
-| N-007 | pending | Prediction on, reconcile in log-only mode | N-005, N-006 | The client simulates locally; corrections are measured and logged but not applied. Error distribution recorded before thresholds are chosen. |
+| N-007 | in verification | Prediction on, reconcile in log-only mode | N-005, N-006 | The client simulates locally; corrections are measured and logged but not applied. Error distribution recorded before thresholds are chosen. |
 | N-008 | pending | Reconcile enforcement, replay and smoothing | N-007 | Replay re-simulates unacked input with the collision cut suppressed. At 100 ms RTT and 2% loss the local car answers steering within one frame and never visibly snaps. |
 | N-009 | pending | Visual absorber | N-008 | Collision root is smoothed and the mesh lags only on hard snaps. |
 | N-010 | pending | Per-player race state | N-008 | Score, near misses, collisions and progress move to `AOverlanePlayerState`; the winner scan stops being nested inside the host-pawn null check. |
