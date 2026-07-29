@@ -32,6 +32,17 @@ protected:
 
 private:
     UMaterialInstanceDynamic* CreateColorMaterial(const FLinearColor& Color) const;
+
+    /**
+     * Build a material for one surface class.
+     *
+     * Falls back to the flat colour material when no override is assigned, so
+     * the environment keeps working with nothing plugged in. When an override IS
+     * assigned it is passed the surface tint plus the road geometry, so a
+     * world-aligned master material can place wheel-polish wear lanes without
+     * needing its own copy of the layout numbers.
+     */
+    UMaterialInstanceDynamic* CreateSurfaceMaterial(UMaterialInterface* Override, const FLinearColor& Tint) const;
     void BuildVisualRoute();
     void AddLaneMarkings();
     void AddRoadsideFurniture();
@@ -52,6 +63,39 @@ private:
     // replication role.
     UPROPERTY(VisibleAnywhere, Category = "Highway|Rendering")
     TObjectPtr<UPostProcessComponent> VisualPostProcess;
+
+    /**
+     * Per-surface material overrides.
+     *
+     * Everything in this environment previously rendered through a single
+     * instance of /Engine/BasicShapes/BasicShapeMaterial that differed only in a
+     * Color parameter - asphalt, painted steel, concrete, glass and tree bark all
+     * with identical roughness, no normal map and no AO. That is literally the
+     * shading model of an injection-moulded toy: one surface, many dyes.
+     *
+     * These slots let a proper material be plugged in per surface class without
+     * touching the generator. Leave any of them empty and that surface keeps the
+     * old flat-colour behaviour.
+     *
+     * The road slot in particular wants a WORLD-ALIGNED material: RoadSurface is
+     * an engine cube at scale (6300, 20, 0.07), and the cube has one 0-1 UV set
+     * per face, so a UV-sampled texture stretches 6.3 km by 20 m - roughly 315:1.
+     * The road has never carried a texture because the geometry cannot carry one.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
+    TObjectPtr<UMaterialInterface> RoadSurfaceMaterial;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
+    TObjectPtr<UMaterialInterface> ShoulderSurfaceMaterial;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
+    TObjectPtr<UMaterialInterface> ConcreteSurfaceMaterial;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
+    TObjectPtr<UMaterialInterface> MetalSurfaceMaterial;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
+    TObjectPtr<UMaterialInterface> TerrainSurfaceMaterial;
 
     UPROPERTY(VisibleAnywhere, Category = "Highway")
     TObjectPtr<UStaticMeshComponent> LeftLandscape;

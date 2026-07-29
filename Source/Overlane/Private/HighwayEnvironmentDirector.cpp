@@ -217,6 +217,32 @@ UMaterialInstanceDynamic* AHighwayEnvironmentDirector::CreateColorMaterial(const
     return Material;
 }
 
+UMaterialInstanceDynamic* AHighwayEnvironmentDirector::CreateSurfaceMaterial(UMaterialInterface* Override, const FLinearColor& Tint) const
+{
+    if (!Override)
+    {
+        return CreateColorMaterial(Tint);
+    }
+
+    UMaterialInstanceDynamic* Material = UMaterialInstanceDynamic::Create(Override, const_cast<AHighwayEnvironmentDirector*>(this));
+    if (!Material)
+    {
+        return CreateColorMaterial(Tint);
+    }
+
+    // Both names are set so a master material can use either convention.
+    Material->SetVectorParameterValue(TEXT("Tint"), Tint);
+    Material->SetVectorParameterValue(TEXT("Color"), Tint);
+
+    // Hand the material the layout it needs to place wheel-polish wear lanes
+    // analytically, instead of hard-coding the road numbers a second time.
+    Material->SetScalarParameterValue(TEXT("RoadWidth"), RoadWidth);
+    Material->SetScalarParameterValue(TEXT("LaneWidth"), RoadWidth / 3.0f);
+    Material->SetScalarParameterValue(TEXT("RouteLength"), RouteLength);
+
+    return Material;
+}
+
 void AHighwayEnvironmentDirector::BuildVisualRoute()
 {
     if (bBuilt || !CubeMesh)
@@ -229,10 +255,10 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
 
     const float VisualRouteLength = RouteLength + (VisualRouteOverscan * 2.0f);
 
-    UMaterialInstanceDynamic* TerrainMaterial = CreateColorMaterial(FLinearColor(0.18f, 0.22f, 0.11f));
-    UMaterialInstanceDynamic* AsphaltMaterial = CreateColorMaterial(FLinearColor(0.025f, 0.03f, 0.045f));
-    UMaterialInstanceDynamic* ShoulderMaterial = CreateColorMaterial(FLinearColor(0.09f, 0.10f, 0.12f));
-    UMaterialInstanceDynamic* RailMaterial = CreateColorMaterial(FLinearColor(0.18f, 0.23f, 0.28f));
+    UMaterialInstanceDynamic* TerrainMaterial = CreateSurfaceMaterial(TerrainSurfaceMaterial, FLinearColor(0.18f, 0.22f, 0.11f));
+    UMaterialInstanceDynamic* AsphaltMaterial = CreateSurfaceMaterial(RoadSurfaceMaterial, FLinearColor(0.025f, 0.03f, 0.045f));
+    UMaterialInstanceDynamic* ShoulderMaterial = CreateSurfaceMaterial(ShoulderSurfaceMaterial, FLinearColor(0.09f, 0.10f, 0.12f));
+    UMaterialInstanceDynamic* RailMaterial = CreateSurfaceMaterial(MetalSurfaceMaterial, FLinearColor(0.18f, 0.23f, 0.28f));
 
     LeftLandscape->SetRelativeLocation(FVector(RouteLength * 0.5f, -11000.0f, -4.0f));
     LeftLandscape->SetRelativeScale3D(FVector(VisualRouteLength / CubeSize, 200.0f, 0.06f));
@@ -268,13 +294,13 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
     SignPosts->SetMaterial(0, RailMaterial);
     SignBoards->SetMaterial(0, CreateColorMaterial(FLinearColor(0.05f, 0.28f, 0.55f)));
     DistantHills->SetMaterial(0, CreateColorMaterial(FLinearColor(0.11f, 0.16f, 0.09f)));
-    HeroServicePads->SetMaterial(0, CreateColorMaterial(FLinearColor(0.035f, 0.04f, 0.055f)));
+    HeroServicePads->SetMaterial(0, CreateSurfaceMaterial(RoadSurfaceMaterial, FLinearColor(0.035f, 0.04f, 0.055f)));
     HeroServiceCanopies->SetMaterial(0, CreateColorMaterial(FLinearColor(0.86f, 0.08f, 0.025f)));
     HeroServiceColumns->SetMaterial(0, CreateColorMaterial(FLinearColor(0.80f, 0.84f, 0.88f)));
     HeroFuelPumps->SetMaterial(0, CreateColorMaterial(FLinearColor(0.03f, 0.22f, 0.64f)));
     HeroServiceSigns->SetMaterial(0, CreateColorMaterial(FLinearColor(1.0f, 0.62f, 0.05f)));
-    InterchangeDecks->SetMaterial(0, CreateColorMaterial(FLinearColor(0.19f, 0.23f, 0.28f)));
-    InterchangeColumns->SetMaterial(0, CreateColorMaterial(FLinearColor(0.44f, 0.48f, 0.52f)));
+    InterchangeDecks->SetMaterial(0, CreateSurfaceMaterial(ConcreteSurfaceMaterial, FLinearColor(0.19f, 0.23f, 0.28f)));
+    InterchangeColumns->SetMaterial(0, CreateSurfaceMaterial(ConcreteSurfaceMaterial, FLinearColor(0.44f, 0.48f, 0.52f)));
     InterchangeRails->SetMaterial(0, CreateColorMaterial(FLinearColor(0.79f, 0.83f, 0.86f)));
     InterchangeSigns->SetMaterial(0, CreateColorMaterial(FLinearColor(0.04f, 0.34f, 0.20f)));
     InterchangeCityBlocks->SetMaterial(0, CreateColorMaterial(FLinearColor(0.12f, 0.20f, 0.29f)));
