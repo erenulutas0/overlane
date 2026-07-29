@@ -406,10 +406,15 @@ FString AOverlaneGameModeBase::GetRivalDebugText() const
 
     const float BlockerGap = PracticeBotController->GetTrackedGapMeters();
     return FString::Printf(
-        TEXT("BOT: %d KM/H  ONDEKI: %s  SERIT %d"),
+        TEXT("BOT: %d KM/H  ONDEKI: %s  SERIT %d  MERGE %d/%d  RED kazanc:%d guvenlik:%d  TURBO:%s"),
         FMath::RoundToInt(PracticeBotController->GetBotSpeedKph()),
         BlockerGap < 0.0f ? TEXT("YOK") : *FString::Printf(TEXT("%d M"), FMath::RoundToInt(BlockerGap)),
-        PracticeBotController->GetCurrentLaneIndex());
+        PracticeBotController->GetCurrentLaneIndex(),
+        PracticeBotController->GetMergesCompleted(),
+        PracticeBotController->GetMergesStarted(),
+        PracticeBotController->GetRejectedByGain(),
+        PracticeBotController->GetRejectedBySafety(),
+        PracticeBotController->IsBoostEngaged() ? TEXT("HAZIR") : TEXT("-"));
 }
 
 int32 AOverlaneGameModeBase::GetRivalGapMeters() const

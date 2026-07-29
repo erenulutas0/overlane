@@ -39,6 +39,13 @@ public:
     float GetTrackedGapMeters() const { return LastGapToBlocker >= BigDistance ? -1.0f : LastGapToBlocker / 100.0f; }
     int32 GetCurrentLaneIndex() const { return CurrentLaneIndex; }
 
+    /** Why the rival is or is not overtaking. Without these it is guesswork. */
+    int32 GetMergesStarted() const { return MergesStarted; }
+    int32 GetMergesCompleted() const { return MergesCompleted; }
+    int32 GetRejectedByGain() const { return RejectedByGain; }
+    int32 GetRejectedBySafety() const { return RejectedBySafety; }
+    bool IsBoostEngaged() const { return bBoostEngaged; }
+
 protected:
     virtual void Tick(float DeltaSeconds) override;
 
@@ -159,6 +166,22 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float RivalPawnClearance = 700.0f;
 
+    /**
+     * Room required ahead and behind AT THE MOMENT OF MERGING, on top of the
+     * bumper allowance and the closing-speed braking term.
+     *
+     * Deliberately much smaller than MinimumFollowingDistance. That value is the
+     * settled gap the follow law converges to, and requiring it during a merge
+     * made the window wider than the gaps the traffic director actually creates -
+     * so the rival could essentially never change lane and sat behind whatever
+     * was in front of it for the rest of the race.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
+    float MergeBufferAhead = 250.0f;
+
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
+    float MergeBufferBehind = 150.0f;
+
     // --- Difficulty ----------------------------------------------------------
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.0"))
     float RubberBandRangeMeters = 120.0f;
@@ -193,6 +216,10 @@ private:
     int32 CurrentLaneIndex = INDEX_NONE;
     int32 TargetLaneIndex = INDEX_NONE;
     int32 SteeringTargetLaneIndex = INDEX_NONE;
+    int32 MergesStarted = 0;
+    int32 MergesCompleted = 0;
+    int32 RejectedByGain = 0;
+    int32 RejectedBySafety = 0;
     bool bBlockedAhead = false;
     bool bBoostEngaged = false;
     bool bWasRivalContactActive = false;

@@ -192,8 +192,16 @@ bool AOverlaneBotDriverController::IsLaneChangeSafeForBot(
 
         if (RelativeDistance >= 0.0f)
         {
+            // The buffer here is the room needed AT THE MOMENT OF MERGING, not
+            // the steady-state following distance. Demanding the full 12 m
+            // settled gap made the window 17.2 m, while the director packs lanes
+            // at 35 m with an 11.2 m per-lane stagger - which puts the adjacent
+            // car exactly where it blocks the merge, on both sides at once. The
+            // bot could therefore essentially never change lane. It is fine to
+            // merge into a smaller gap and settle back afterwards; that is what
+            // the follow law is for.
             const float Closing = FMath::Max(0.0f, BotSpeed - OtherSpeed);
-            const float Required = MinimumFollowingDistance + BumperAllowance
+            const float Required = MergeBufferAhead + BumperAllowance
                 + ((Closing * Closing) / (2.0f * ComfortDeceleration));
             if (RelativeDistance < Required)
             {
@@ -205,7 +213,7 @@ bool AOverlaneBotDriverController::IsLaneChangeSafeForBot(
             // Less room is needed behind: the car back there is the one with the
             // brakes, and traffic already runs its own following law.
             const float Closing = FMath::Max(0.0f, OtherSpeed - BotSpeed);
-            const float Required = (MinimumFollowingDistance * 0.5f) + BumperAllowance
+            const float Required = MergeBufferBehind + BumperAllowance
                 + ((Closing * Closing) / (2.0f * ComfortDeceleration));
             if (-RelativeDistance < Required)
             {
@@ -305,17 +313,27 @@ void AOverlaneBotDriverController::ConsiderOvertake(
         ATrafficLanePath* CandidateLane = Lanes[CandidateIndex].Get();
         const float CandidateSpeed = ComputeLaneSpeedPotential(CandidateLane, CruiseSpeed);
 
-        if (CandidateSpeed > BestScore && IsLaneChangeSafeForBot(CandidateLane, Vehicle, BotSpeed))
+        if (CandidateSpeed <= BestScore)
         {
-            BestScore = CandidateSpeed;
-            BestIndex = CandidateIndex;
+            ++RejectedByGain;
+            continue;
         }
+
+        if (!IsLaneChangeSafeForBot(CandidateLane, Vehicle, BotSpeed))
+        {
+            ++RejectedBySafety;
+            continue;
+        }
+
+        BestScore = CandidateSpeed;
+        BestIndex = CandidateIndex;
     }
 
     if (BestIndex != INDEX_NONE)
     {
         TargetLaneIndex = BestIndex;
         LaneChangeElapsed = 0.0f;
+        ++MergesStarted;
     }
 }
 
@@ -420,12 +438,13 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
             const float ReseedDistance = Lanes[CurrentLaneIndex]->GetClosestDistanceToLocation(Vehicle->GetActorLocation());
             TrackedLaneDistance = FMath::Clamp(ReseedDistance, TrackedLaneDistance - 400.0f, TrackedLaneDistance + 400.0f);
 
-            LaneChangeCooldown =2.0f;
+            ++MergesCompleted;
+            LaneChangeCooldown = 2.0f;
         }
         else if (LaneChangeElapsed > LaneChangeTimeout)
         {
             TargetLaneIndex = CurrentLaneIndex;
-            LaneChangeCooldown =1.5f;
+            LaneChangeCooldown = 1.5f;
         }
     }
 
