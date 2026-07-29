@@ -92,6 +92,17 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces", meta = (ClampMin = "1.0"))
     float TrafficLaneSpacing = 600.0f;
 
+    /**
+     * Distant terrain on the horizon.
+     *
+     * Turn it off if a bare fogged horizon reads better than approximate hills -
+     * an empty horizon is honest, whereas hills that do not convince are worse
+     * than none. Kept on by default because the route is dead flat and the
+     * horizon otherwise has nothing in it at all.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering")
+    bool bShowDistantHills = true;
+
     UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
     TObjectPtr<UMaterialInterface> RoadSurfaceMaterial;
 

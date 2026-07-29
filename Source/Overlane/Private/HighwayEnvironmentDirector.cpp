@@ -162,7 +162,9 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
     LampHeads->SetStaticMesh(SphereMesh);
     SignPosts->SetStaticMesh(CylinderMesh);
     SignBoards->SetStaticMesh(CubeMesh);
-    DistantHills->SetStaticMesh(ConeMesh);
+    // A flattened sphere, not a cone: a dome reads as a hill, a cone reads as a
+    // cone no matter how it is scaled.
+    DistantHills->SetStaticMesh(SphereMesh);
     HeroStreetLights->SetStaticMesh(StreetLightFinder.Object);
     HeroTrees->SetStaticMesh(HillTreeFinder.Object);
     HeroBuildings->SetStaticMesh(BuildingFinder.Object);
@@ -321,7 +323,10 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
     LampHeads->SetMaterial(0, CreateColorMaterial(FLinearColor(0.55f, 0.88f, 1.0f)));
     SignPosts->SetMaterial(0, RailMaterial);
     SignBoards->SetMaterial(0, CreateColorMaterial(FLinearColor(0.05f, 0.28f, 0.55f)));
-    DistantHills->SetMaterial(0, CreateColorMaterial(FLinearColor(0.11f, 0.16f, 0.09f)));
+    // Distance desaturates and cools. A saturated green mass on the horizon reads
+    // as a nearby object; a cool grey-green one reads as far away, and it also
+    // stops the hills bouncing colour onto the road now that Lumen is on.
+    DistantHills->SetMaterial(0, CreateSurfaceMaterial(TerrainSurfaceMaterial, FLinearColor(0.075f, 0.095f, 0.105f)));
     HeroServicePads->SetMaterial(0, CreateSurfaceMaterial(RoadSurfaceMaterial, FLinearColor(0.035f, 0.04f, 0.055f)));
     HeroServiceCanopies->SetMaterial(0, CreateColorMaterial(FLinearColor(0.86f, 0.08f, 0.025f)));
     HeroServiceColumns->SetMaterial(0, CreateColorMaterial(FLinearColor(0.80f, 0.84f, 0.88f)));
@@ -755,16 +760,43 @@ void AHighwayEnvironmentDirector::AddProductionArchitecture()
 
 void AHighwayEnvironmentDirector::AddDistantLandscape()
 {
+    if (!bShowDistantHills)
+    {
+        return;
+    }
+
+    // These used to be cones scaled 10-16 wide by 14-27 tall, sitting only 50-70
+    // metres off the road. Taller than wide, evenly spaced and close enough to
+    // parallax against the barrier, they read as giant traffic cones rather than
+    // terrain - and no amount of scaling fixes that, because a cone silhouette is
+    // a cone. A flattened sphere gives a rounded dome, which is what a distant
+    // hill actually looks like.
+    //
+    // Real distant terrain is also much wider than tall (roughly 8:1 here), far
+    // enough away not to parallax, and irregular. Even spacing is what makes a
+    // horizon read as manufactured.
     int32 HillIndex = 0;
-    for (float X = 100000.0f; X < RouteLength + 6000.0f; X += 11000.0f)
+    for (float X = 40000.0f; X < RouteLength + 60000.0f; X += 47000.0f)
     {
         for (const float Side : { -1.0f, 1.0f })
         {
-            const float Variation = static_cast<float>((HillIndex * 37) % 9);
-            const float Y = Side * (5200.0f + (Variation * 260.0f));
-            const float ScaleXY = 10.0f + (Variation * 0.8f);
-            const float ScaleZ = 14.0f + (Variation * 1.5f);
-            DistantHills->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X + (Variation * 140.0f), Y, ScaleZ * 50.0f), FVector(ScaleXY, ScaleXY, ScaleZ)));
+            // Two coprime strides so the pattern does not visibly repeat.
+            const float SpreadNoise = static_cast<float>((HillIndex * 37) % 13) / 13.0f;
+            const float SizeNoise = static_cast<float>((HillIndex * 23) % 11) / 11.0f;
+
+            const float Y = Side * (36000.0f + (SpreadNoise * 42000.0f));
+            const float ScaleXY = 240.0f + (SizeNoise * 210.0f);
+            const float ScaleZ = ScaleXY * (0.10f + (SpreadNoise * 0.05f));
+            const float AlongRoad = X + (SpreadNoise * 26000.0f);
+
+            // Sphere pivot is central, so Z = 0 buries the lower half and leaves a
+            // dome. A little extra burial varies the profile between instances.
+            const float Z = -ScaleZ * (4.0f + (SizeNoise * 12.0f));
+
+            DistantHills->AddInstance(FTransform(
+                FRotator(0.0f, SpreadNoise * 360.0f, 0.0f),
+                FVector(AlongRoad, Y, Z),
+                FVector(ScaleXY, ScaleXY * (0.7f + (SizeNoise * 0.6f)), ScaleZ)));
             ++HillIndex;
         }
     }
