@@ -242,9 +242,13 @@ UMaterialInstanceDynamic* AHighwayEnvironmentDirector::CreateSurfaceMaterial(UMa
         return CreateColorMaterial(Tint);
     }
 
-    // Both names are set so a master material can use either convention.
-    Material->SetVectorParameterValue(TEXT("Tint"), Tint);
-    Material->SetVectorParameterValue(TEXT("Color"), Tint);
+    // Deliberately does NOT push the fallback colour into the material.
+    //
+    // That colour exists to stand in for a texture on the flat material. Feeding
+    // it to a textured material as a multiplier crushed the asphalt to black:
+    // the albedo is already around 0.06 and the fallback asphalt colour is 0.03,
+    // so the product was effectively zero and the surface detail was invisible.
+    // A real material carries its own tint, exposed on its instance.
 
     // Hand the material the layout it needs to place wheel-polish wear lanes
     // analytically, instead of hard-coding the road numbers a second time.

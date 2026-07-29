@@ -182,13 +182,38 @@ def build_material(textures):
     macro_luma = make(material, unreal.MaterialExpressionDesaturation, -1250, 100)
     link(macro_sample, "RGB", macro_luma, "")
 
-    macro_amount = scalar(material, "MacroVariationAmount", 0.55, -1600, 260)
-    macro_low = constant(material, 1.0, -1250, 260)
+    # Asphalt albedo sits around 0.06, so the raw luminance is nowhere near the
+    # 0.5 midpoint a variation term needs. Gain it up and saturate first, or the
+    # variation is not a variation at all - it is a near-black multiplier that
+    # crushes the surface, which is exactly what the first version did.
+    macro_gain = scalar(material, "MacroGain", 9.0, -1600, 200)
+    macro_gained = make(material, unreal.MaterialExpressionMultiply, -1100, 100)
+    link(macro_luma, "", macro_gained, "A")
+    link(macro_gain, "", macro_gained, "B")
 
-    macro_range = make(material, unreal.MaterialExpressionLinearInterpolate, -1000, 160)
+    macro_norm = make(material, unreal.MaterialExpressionSaturate, -950, 100)
+    link(macro_gained, "", macro_norm, "")
+
+    # Centre the variation on 1.0: [1 - amount/2, 1 + amount/2].
+    macro_amount = scalar(material, "MacroVariationAmount", 0.35, -1600, 300)
+    macro_half = make(material, unreal.MaterialExpressionMultiply, -1350, 300)
+    half_const = constant(material, 0.5, -1600, 380)
+    link(macro_amount, "", macro_half, "A")
+    link(half_const, "", macro_half, "B")
+
+    one_const = constant(material, 1.0, -1350, 220)
+    macro_low = make(material, unreal.MaterialExpressionSubtract, -1100, 260)
+    link(one_const, "", macro_low, "A")
+    link(macro_half, "", macro_low, "B")
+
+    macro_high = make(material, unreal.MaterialExpressionAdd, -1100, 340)
+    link(one_const, "", macro_high, "A")
+    link(macro_half, "", macro_high, "B")
+
+    macro_range = make(material, unreal.MaterialExpressionLinearInterpolate, -850, 260)
     link(macro_low, "", macro_range, "A")
-    link(macro_luma, "", macro_range, "B")
-    link(macro_amount, "", macro_range, "Alpha")
+    link(macro_high, "", macro_range, "B")
+    link(macro_norm, "", macro_range, "Alpha")
 
     tinted = make(material, unreal.MaterialExpressionMultiply, -700, -260)
     link(base_sample, "RGB", tinted, "A")
@@ -261,11 +286,21 @@ def build_material(textures):
     link(rough_polished, "", rough_target, "B")
     link(wear_scaled, "", rough_target, "Alpha")
 
-    rough_textured = make(material, unreal.MaterialExpressionMultiply, 460, 800)
-    link(rough_target, "", rough_textured, "A")
-    link(rough_sample, "R", rough_textured, "B")
+    # The roughness map is used as a VARIATION around the target, not as a
+    # multiplier. Multiplying by a 0.3-0.8 map would have dragged the whole
+    # surface far shinier than any asphalt and washed out the wear lanes.
+    rough_var_low = constant(material, 0.85, 240, 1000)
+    rough_var_high = constant(material, 1.15, 240, 1060)
+    rough_variation = make(material, unreal.MaterialExpressionLinearInterpolate, 420, 1000)
+    link(rough_var_low, "", rough_variation, "A")
+    link(rough_var_high, "", rough_variation, "B")
+    link(rough_sample, "R", rough_variation, "Alpha")
 
-    rough_final = make(material, unreal.MaterialExpressionMultiply, 660, 800)
+    rough_textured = make(material, unreal.MaterialExpressionMultiply, 620, 860)
+    link(rough_target, "", rough_textured, "A")
+    link(rough_variation, "", rough_textured, "B")
+
+    rough_final = make(material, unreal.MaterialExpressionMultiply, 800, 860)
     link(rough_textured, "", rough_final, "A")
     link(macro_range, "", rough_final, "B")
 
@@ -315,7 +350,65 @@ def build_instance(material):
     return instance
 
 
+CAR_PAINT_NAME = "M_OverlaneCarPaint"
+
+
+def build_car_paint():
+    """
+    A tintable metallic car paint.
+
+    Traffic still renders through /Engine/BasicShapes/BasicShapeMaterial - flat,
+    metallic 0, one roughness, no fresnel - because Epic's MI_SportsCarBody
+    exposes no tint parameter and the pawn code correctly falls back rather than
+    silently losing the colour coding that near-miss feedback matches against.
+    This gives the fallback a real shading model instead.
+    """
+    path = MATERIAL_PACKAGE + "/" + CAR_PAINT_NAME
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
+        unreal.EditorAssetLibrary.delete_asset(path)
+
+    material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+        CAR_PAINT_NAME, MATERIAL_PACKAGE, unreal.Material, unreal.MaterialFactoryNew())
+
+    tint = make(material, unreal.MaterialExpressionVectorParameter, -800, -200)
+    tint.set_editor_property("parameter_name", "Color")
+    tint.set_editor_property("default_value", unreal.LinearColor(0.6, 0.1, 0.05, 1.0))
+    tint.set_editor_property("group", "Paint")
+
+    metallic = scalar(material, "Metallic", 0.85, -800, 60, "Paint")
+    roughness = scalar(material, "Roughness", 0.24, -800, 140, "Paint")
+
+    # A little edge sheen so the silhouette separates from the road at distance,
+    # which matters more here than on a parked car: traffic is read as a shape
+    # against dark asphalt at 240 km/h.
+    fresnel = make(material, unreal.MaterialExpressionFresnel, -800, 260)
+    fresnel.set_editor_property("exponent", 4.0)
+    fresnel.set_editor_property("base_reflect_fraction", 0.04)
+
+    sheen_strength = scalar(material, "EdgeSheen", 0.35, -800, 380, "Paint")
+    sheen = make(material, unreal.MaterialExpressionMultiply, -520, 300)
+    link(fresnel, "", sheen, "A")
+    link(sheen_strength, "", sheen, "B")
+
+    base_color = make(material, unreal.MaterialExpressionAdd, -280, -100)
+    link(tint, "RGB", base_color, "A")
+    link(sheen, "", base_color, "B")
+
+    unreal.MaterialEditingLibrary.connect_material_property(
+        base_color, "", unreal.MaterialProperty.MP_BASE_COLOR)
+    unreal.MaterialEditingLibrary.connect_material_property(
+        metallic, "", unreal.MaterialProperty.MP_METALLIC)
+    unreal.MaterialEditingLibrary.connect_material_property(
+        roughness, "", unreal.MaterialProperty.MP_ROUGHNESS)
+
+    unreal.MaterialEditingLibrary.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(path)
+    log("built " + CAR_PAINT_NAME)
+    return material
+
+
 def run():
+    build_car_paint()
     textures = import_textures()
     if "T_Asphalt_D" not in textures:
         unreal.log_error("[Overlane] aborting: base colour texture missing")
