@@ -253,8 +253,13 @@ UMaterialInstanceDynamic* AHighwayEnvironmentDirector::CreateSurfaceMaterial(UMa
     // Hand the material the layout it needs to place wheel-polish wear lanes
     // analytically, instead of hard-coding the road numbers a second time.
     Material->SetScalarParameterValue(TEXT("RoadWidth"), RoadWidth);
-    Material->SetScalarParameterValue(TEXT("LaneWidth"), RoadWidth / 3.0f);
     Material->SetScalarParameterValue(TEXT("RouteLength"), RouteLength);
+
+    // The actual traffic lanes sit at Y = -600 / 0 / +600, so the spacing is 600,
+    // not RoadWidth/3 = 666. Feeding the wrong number made the wheel-polish wear
+    // lanes drift steadily out of alignment with the lanes cars actually drive
+    // in, which reads as a vague wrongness rather than an obvious bug.
+    Material->SetScalarParameterValue(TEXT("LaneWidth"), TrafficLaneSpacing);
 
     return Material;
 }

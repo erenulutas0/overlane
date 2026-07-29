@@ -375,27 +375,33 @@ def build_car_paint():
     tint.set_editor_property("default_value", unreal.LinearColor(0.6, 0.1, 0.05, 1.0))
     tint.set_editor_property("group", "Paint")
 
-    metallic = scalar(material, "Metallic", 0.85, -800, 60, "Paint")
-    roughness = scalar(material, "Roughness", 0.24, -800, 140, "Paint")
+    # Real car paint is pigment under clear lacquer: LOW metallic with low
+    # roughness and high specular. A high metallic value turns a saturated colour
+    # into coloured chrome, because on a metal the base colour IS the reflection
+    # tint - which is exactly how the first version read.
+    metallic = scalar(material, "Metallic", 0.12, -800, 60, "Paint")
+    roughness = scalar(material, "Roughness", 0.18, -800, 140, "Paint")
 
-    # A little edge sheen so the silhouette separates from the road at distance,
-    # which matters more here than on a parked car: traffic is read as a shape
-    # against dark asphalt at 240 km/h.
-    fresnel = make(material, unreal.MaterialExpressionFresnel, -800, 260)
+    # Edge sheen goes to SPECULAR, not base colour. Adding it to base colour
+    # washed the pigment out and lifted the whole car toward white.
+    fresnel = make(material, unreal.MaterialExpressionFresnel, -800, 280)
     fresnel.set_editor_property("exponent", 4.0)
     fresnel.set_editor_property("base_reflect_fraction", 0.04)
 
-    sheen_strength = scalar(material, "EdgeSheen", 0.35, -800, 380, "Paint")
-    sheen = make(material, unreal.MaterialExpressionMultiply, -520, 300)
+    sheen_strength = scalar(material, "EdgeSheen", 0.6, -800, 400, "Paint")
+    sheen = make(material, unreal.MaterialExpressionMultiply, -520, 320)
     link(fresnel, "", sheen, "A")
     link(sheen_strength, "", sheen, "B")
 
-    base_color = make(material, unreal.MaterialExpressionAdd, -280, -100)
-    link(tint, "RGB", base_color, "A")
-    link(sheen, "", base_color, "B")
+    specular_base = constant(material, 0.5, -800, 480)
+    specular = make(material, unreal.MaterialExpressionAdd, -280, 380)
+    link(specular_base, "", specular, "A")
+    link(sheen, "", specular, "B")
 
     unreal.MaterialEditingLibrary.connect_material_property(
-        base_color, "", unreal.MaterialProperty.MP_BASE_COLOR)
+        tint, "RGB", unreal.MaterialProperty.MP_BASE_COLOR)
+    unreal.MaterialEditingLibrary.connect_material_property(
+        specular, "", unreal.MaterialProperty.MP_SPECULAR)
     unreal.MaterialEditingLibrary.connect_material_property(
         metallic, "", unreal.MaterialProperty.MP_METALLIC)
     unreal.MaterialEditingLibrary.connect_material_property(

@@ -82,6 +82,16 @@ private:
      * per face, so a UV-sampled texture stretches 6.3 km by 20 m - roughly 315:1.
      * The road has never carried a texture because the geometry cannot carry one.
      */
+    /**
+     * Lateral spacing between traffic lane centres, in world units.
+     *
+     * Must match where ATrafficLanePath actors are actually placed (Y = -600 /
+     * 0 / +600), because the road material uses it to position wheel-polish wear
+     * lanes. It is NOT RoadWidth / lane count: the road is wider than the lanes.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces", meta = (ClampMin = "1.0"))
+    float TrafficLaneSpacing = 600.0f;
+
     UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
     TObjectPtr<UMaterialInterface> RoadSurfaceMaterial;
 
