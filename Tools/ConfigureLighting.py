@@ -26,8 +26,12 @@ LEVEL_PATH = "/Game/Maps/L_VehicleHandlingTest"
 
 # Roughly 40 degrees off the highway axis: never straight down the road, or the
 # specular band collapses onto the vanishing point instead of raking across.
-SUN_PITCH = -15.0
+SUN_PITCH = -35.0
 SUN_YAW = 40.0
+
+# The level shipped at 6.0, which is below the engine's own default of 10 and was
+# a large part of why the scene read as night once the sun was also lowered.
+SUN_INTENSITY = 12.0
 
 
 def log(message):
@@ -77,6 +81,8 @@ def configure_directional_light(actor):
         unreal.log_error("[Overlane] directional light has no light component")
         return False
 
+    try_set(component, ["intensity"], SUN_INTENSITY, "sun intensity")
+
     # A 6 km straight needs shadows far past the 200 m default.
     try_set(component, ["dynamic_shadow_distance_movable_light"], 40000.0, "shadow distance")
     try_set(component, ["dynamic_shadow_cascades"], 4, "cascades")
@@ -111,7 +117,9 @@ def configure_sky_light(actor):
     # Movable so Lumen keeps it in sync as the scene changes.
     component.set_mobility(unreal.ComponentMobility.MOVABLE)
     try_set(component, ["real_time_capture"], True, "real time capture")
-    try_set(component, ["intensity"], 1.0, "sky light intensity")
+    # Ambient fill. A dark asphalt road under a low sun has almost no bounce of
+    # its own, so the sky is what keeps shadowed sides of cars readable.
+    try_set(component, ["intensity"], 1.6, "sky light intensity")
     log("configured sky light")
     return True
 

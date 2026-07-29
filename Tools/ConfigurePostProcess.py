@@ -95,6 +95,17 @@ def configure_volume(volume):
         settings.set_editor_property(flag, True)
         settings.set_editor_property(name, unreal.Vector4(r, g, b, 1.0))
 
+    # --- Exposure: actively CLEARED, not merely left unset -------------------
+    #
+    # This has to switch the override off explicitly. Simply removing the code
+    # that set it was not enough: the volume is reused across runs, so the stored
+    # Manual metering survived and the scene stayed black. "Stop writing a value"
+    # and "clear a value" are different operations on a persisted asset.
+    settings.set_editor_property("override_auto_exposure_method", False)
+    settings.set_editor_property("override_auto_exposure_bias", False)
+    settings.set_editor_property("override_auto_exposure_min_brightness", False)
+    settings.set_editor_property("override_auto_exposure_max_brightness", False)
+
     # --- Exposure: DELIBERATELY NOT OVERRIDDEN ------------------------------
     #
     # Manual metering was tried and reverted. It hands exposure to the camera's
