@@ -50,6 +50,25 @@ def get_all_actors():
     return unreal.EditorLevelLibrary.get_all_level_actors()
 
 
+def try_set(component, candidates, value, label):
+    """
+    Set the first property name that exists.
+
+    Engine property names drift between versions and the Python bindings do not
+    always match the C++ or the editor label, so a single wrong guess must not
+    abort the whole pass and leave the level half-configured.
+    """
+    for name in candidates:
+        try:
+            component.set_editor_property(name, value)
+            return True
+        except Exception:
+            continue
+
+    unreal.log_warning("[Overlane] could not set " + label + " (tried: " + ", ".join(candidates) + ")")
+    return False
+
+
 def configure_directional_light(actor):
     actor.set_actor_rotation(unreal.Rotator(0.0, SUN_PITCH, SUN_YAW), False)
 
@@ -59,21 +78,26 @@ def configure_directional_light(actor):
         return False
 
     # A 6 km straight needs shadows far past the 200 m default.
-    component.set_editor_property("dynamic_shadow_distance_movable_light", 40000.0)
-    component.set_editor_property("dynamic_shadow_cascades", 4)
-    component.set_editor_property("cascade_distribution_exponent", 3.0)
+    try_set(component, ["dynamic_shadow_distance_movable_light"], 40000.0, "shadow distance")
+    try_set(component, ["dynamic_shadow_cascades"], 4, "cascades")
+    try_set(component, ["cascade_distribution_exponent"], 3.0, "cascade exponent")
 
     # Softens the shadow edge the way a real sun does; 0.5357 is a point source.
-    component.set_editor_property("light_source_angle", 1.2)
+    try_set(component, ["light_source_angle"], 1.2, "source angle")
 
     # World-space, not screen-space: the camera arm varies with speed, and a
     # screen-space length would make the tyre contact gap breathe as it moves.
-    component.set_editor_property("contact_shadow_length_in_world_space_units", True)
-    component.set_editor_property("contact_shadow_length", 20.0)
+    if try_set(component,
+               ["contact_shadow_length_in_ws", "contact_shadow_length_in_world_space_units"],
+               True, "contact shadow world space"):
+        try_set(component, ["contact_shadow_length"], 20.0, "contact shadow length")
+    else:
+        # Screen-space fallback: 0.03 is the plan's equivalent.
+        try_set(component, ["contact_shadow_length"], 0.03, "contact shadow length")
 
-    component.set_editor_property("use_temperature", True)
-    component.set_editor_property("temperature", 5800.0)
-    component.set_editor_property("atmosphere_sun_light", True)
+    try_set(component, ["use_temperature"], True, "use temperature")
+    try_set(component, ["temperature"], 5800.0, "temperature")
+    try_set(component, ["atmosphere_sun_light"], True, "atmosphere sun")
 
     log("configured directional light")
     return True
@@ -86,8 +110,8 @@ def configure_sky_light(actor):
 
     # Movable so Lumen keeps it in sync as the scene changes.
     component.set_mobility(unreal.ComponentMobility.MOVABLE)
-    component.set_editor_property("real_time_capture", True)
-    component.set_editor_property("intensity", 1.0)
+    try_set(component, ["real_time_capture"], True, "real time capture")
+    try_set(component, ["intensity"], 1.0, "sky light intensity")
     log("configured sky light")
     return True
 

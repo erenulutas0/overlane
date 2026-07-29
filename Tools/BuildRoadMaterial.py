@@ -379,8 +379,12 @@ def build_car_paint():
     # roughness and high specular. A high metallic value turns a saturated colour
     # into coloured chrome, because on a metal the base colour IS the reflection
     # tint - which is exactly how the first version read.
+    # Roughness is a readability constraint here, not just a look. At 0.18 the
+    # paint is close to a mirror, so under a bright sky every traffic car
+    # reflected it and washed out to a pale glow - and traffic colour is
+    # gameplay-readable state the player has to identify at 240 km/h.
     metallic = scalar(material, "Metallic", 0.12, -800, 60, "Paint")
-    roughness = scalar(material, "Roughness", 0.18, -800, 140, "Paint")
+    roughness = scalar(material, "Roughness", 0.34, -800, 140, "Paint")
 
     # Edge sheen goes to SPECULAR, not base colour. Adding it to base colour
     # washed the pigment out and lifted the whole car toward white.
@@ -388,7 +392,9 @@ def build_car_paint():
     fresnel.set_editor_property("exponent", 4.0)
     fresnel.set_editor_property("base_reflect_fraction", 0.04)
 
-    sheen_strength = scalar(material, "EdgeSheen", 0.6, -800, 400, "Paint")
+    # Kept deliberately small. At 0.6 the fresnel pushed specular past 1.0 at
+    # grazing angles, which is where most of a passing car is seen from.
+    sheen_strength = scalar(material, "EdgeSheen", 0.12, -800, 400, "Paint")
     sheen = make(material, unreal.MaterialExpressionMultiply, -520, 320)
     link(fresnel, "", sheen, "A")
     link(sheen_strength, "", sheen, "B")
