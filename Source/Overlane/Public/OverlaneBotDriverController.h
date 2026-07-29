@@ -58,17 +58,44 @@ private:
 
     void RefreshTrafficCache(float DeltaSeconds);
     void UpdateTrackedLaneDistance(const AOverlaneVehiclePawn& Vehicle, float DeltaSeconds);
-    void ConsiderOvertake(const AOverlaneVehiclePawn& Vehicle, float CurrentSpeedPotential, float CruiseSpeed, float BotSpeed);
+    void ConsiderOvertake(const AOverlaneVehiclePawn& Vehicle, float CurrentLaneProjection, float CruiseSpeed, float BotSpeed);
     bool IsLaneChangeSafeForBot(const ATrafficLanePath* CandidateLane, const AOverlaneVehiclePawn& Vehicle, float BotSpeed) const;
 
     /** The shared safe-following speed law, so every caller uses one curve. */
     float ComputeFollowSpeed(float Gap, float LeaderSpeed, float CruiseSpeed) const;
 
-    /** The speed this lane would actually allow right now. */
-    float ComputeLaneSpeedPotential(const ATrafficLanePath* Lane, float CruiseSpeed) const;
+    /**
+     * How far the bot would get in this lane over LaneScoreHorizon seconds.
+     *
+     * This replaced an instantaneous "what speed does this lane allow right now"
+     * score, which could not answer the question the bot actually has. The follow
+     * law collapses to LeaderSpeed * Gap/MinimumFollowingDistance once inside the
+     * buffer, so a car merely ALONGSIDE the bot in the candidate lane scored that
+     * lane as a near-stationary wall. The director staggers lanes by 11.2 m, which
+     * puts such a car there almost permanently -- so the rival rejected both
+     * neighbours on "no speed gain" essentially every frame it looked.
+     *
+     * Rolling the same follow law forward answers it honestly: a car 3 m ahead
+     * doing 45 km/h still travels 50 m in four seconds, so the lane scores as
+     * "no better than mine" rather than as a wall, and a lane whose next car is
+     * 60 m out scores the acceleration the bot would really get.
+     */
+    float ComputeLaneProjectedDistance(const ATrafficLanePath* Lane, float CruiseSpeed, float BotSpeed) const;
+
+    /** The roll-out itself, so a hypothetical clear lane can be scored too. */
+    float ProjectDistance(float Gap, float LeaderSpeed, float CruiseSpeed, float BotSpeed) const;
     float ComputeRubberBandScale(const AOverlaneVehiclePawn& Vehicle) const;
 
     static constexpr float BigDistance = 1.0e9f;
+
+    /**
+     * How fast the roll-out lets speed close on the follow law's target.
+     *
+     * Matches the throttle controller's own first-order response so a lane is
+     * scored by the speed the bot could really reach in the horizon, not by the
+     * speed the law would permit instantly.
+     */
+    static constexpr float SpeedTrackingRate = 2.0f;
 
     UPROPERTY(Transient)
     TObjectPtr<ATrafficLanePath> LanePath;
@@ -158,15 +185,31 @@ private:
     float AbortedMergeCooldown = 1.2f;
 
     /**
-     * How much faster the candidate lane must let the bot go, in cm/s.
+     * How far ahead the follow law is rolled forward when scoring a lane.
      *
-     * This replaced a raw-gap margin. Gap is the wrong currency: the traffic
-     * director packs each lane into platoons spaced at its own following
-     * distance, so "candidate gap must beat my gap by 15 m" was comparing two
-     * numbers that are both pinned to that spacing, and essentially never passed.
+     * Long enough that a clear lane shows its acceleration (the bot needs about
+     * three seconds to climb from traffic speed to cruise), short enough that the
+     * roll-out is not predicting traffic that will have moved by then.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.5"))
+    float LaneScoreHorizon = 4.0f;
+
+    /**
+     * Extra ground the candidate lane must cover over LaneScoreHorizon, in cm.
+     *
+     * This is the third currency tried here, and the first that is comparable
+     * between lanes. A raw-gap margin failed because every lane is pinned to the
+     * director's platoon spacing; a cm/s margin failed because the follow law's
+     * fixed point makes the bot an exact speed copy of its leader, so the current
+     * lane's score and the candidate's were both just "whatever traffic is doing".
+     * Distance over a horizon separates them: it integrates the acceleration the
+     * bot would actually get, which is the whole point of changing lane.
+     *
+     * 500 cm over four seconds is about 4.5 km/h of average gain - small enough
+     * that ordinary gaps qualify, large enough that identical lanes do not.
      */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
-    float OvertakeSpeedGain = 450.0f;
+    float OvertakeDistanceGain = 500.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float LaneChangeEndBuffer = 2000.0f;

@@ -273,16 +273,47 @@ float AOverlaneBotDriverController::ComputeFollowSpeed(float Gap, float LeaderSp
     return FMath::Min(CruiseSpeed, LeaderSpeed + FMath::Sqrt(2.0f * ComfortDeceleration * ApproachGap));
 }
 
-float AOverlaneBotDriverController::ComputeLaneSpeedPotential(const ATrafficLanePath* Lane, float CruiseSpeed) const
+float AOverlaneBotDriverController::ProjectDistance(
+    float Gap, float LeaderSpeed, float CruiseSpeed, float BotSpeed) const
+{
+    // A clear lane needs no special case: ComputeFollowSpeed already returns
+    // CruiseSpeed for a BigDistance gap, so the roll-out below just integrates the
+    // climb to cruise, which is exactly the number wanted.
+    const float StepSeconds = 0.25f;
+    const int32 StepCount = FMath::Max(1, FMath::CeilToInt(LaneScoreHorizon / StepSeconds));
+
+    float Speed = FMath::Max(0.0f, BotSpeed);
+    float LeaderAhead = Gap;
+    float Travelled = 0.0f;
+
+    for (int32 Step = 0; Step < StepCount; ++Step)
+    {
+        const float Target = ComputeFollowSpeed(LeaderAhead, LeaderSpeed, CruiseSpeed);
+
+        // First-order tracking, matching how the throttle controller closes on a
+        // target rather than snapping to it, so the score reflects reachable speed.
+        Speed = FMath::FInterpTo(Speed, Target, StepSeconds, SpeedTrackingRate);
+        Travelled += Speed * StepSeconds;
+
+        // The bot cannot drive through its leader, so the gap floors at zero
+        // instead of going negative and re-entering the follow law as a stop.
+        LeaderAhead = FMath::Max(0.0f, LeaderAhead + ((LeaderSpeed - Speed) * StepSeconds));
+    }
+
+    return Travelled;
+}
+
+float AOverlaneBotDriverController::ComputeLaneProjectedDistance(
+    const ATrafficLanePath* Lane, float CruiseSpeed, float BotSpeed) const
 {
     float Gap = BigDistance;
     float LeaderSpeed = 0.0f;
     FindNearestBlocker(Lane, TrackedLaneDistance, Gap, LeaderSpeed);
-    return ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
+    return ProjectDistance(Gap, LeaderSpeed, CruiseSpeed, BotSpeed);
 }
 
 void AOverlaneBotDriverController::ConsiderOvertake(
-    const AOverlaneVehiclePawn& Vehicle, float CurrentSpeedPotential, float CruiseSpeed, float BotSpeed)
+    const AOverlaneVehiclePawn& Vehicle, float CurrentLaneProjection, float CruiseSpeed, float BotSpeed)
 {
     if (TargetLaneIndex != CurrentLaneIndex || LaneChangeCooldown > 0.0f)
     {
@@ -300,7 +331,7 @@ void AOverlaneBotDriverController::ConsiderOvertake(
         return;
     }
 
-    // Score lanes by the speed they would actually allow, not by raw gap.
+    // Score lanes by ground covered over the horizon, not by instantaneous speed.
     //
     // The required gain collapses when the current lane is barely moving. The
     // follow law's fixed point makes the bot an exact speed copy of whatever is
@@ -308,11 +339,13 @@ void AOverlaneBotDriverController::ConsiderOvertake(
     // stopped queue inherits the standstill and, with the usual gain threshold,
     // can never justify leaving it. Any lane that moves at all beats a lane that
     // does not.
-    const float StalledPotential = 400.0f;
-    const float RequiredGain = CurrentSpeedPotential < StalledPotential ? 60.0f : OvertakeSpeedGain;
+    const float StalledProjection = 400.0f * LaneScoreHorizon;
+    const float RequiredGain = CurrentLaneProjection < StalledProjection
+        ? 0.1f * OvertakeDistanceGain
+        : OvertakeDistanceGain;
 
     int32 BestIndex = INDEX_NONE;
-    float BestScore = CurrentSpeedPotential + RequiredGain;
+    float BestScore = CurrentLaneProjection + RequiredGain;
 
     for (const int32 Offset : { -1, 1 })
     {
@@ -323,9 +356,9 @@ void AOverlaneBotDriverController::ConsiderOvertake(
         }
 
         ATrafficLanePath* CandidateLane = Lanes[CandidateIndex].Get();
-        const float CandidateSpeed = ComputeLaneSpeedPotential(CandidateLane, CruiseSpeed);
+        const float CandidateProjection = ComputeLaneProjectedDistance(CandidateLane, CruiseSpeed, BotSpeed);
 
-        if (CandidateSpeed <= BestScore)
+        if (CandidateProjection <= BestScore)
         {
             ++RejectedByGain;
             continue;
@@ -337,7 +370,7 @@ void AOverlaneBotDriverController::ConsiderOvertake(
             continue;
         }
 
-        BestScore = CandidateSpeed;
+        BestScore = CandidateProjection;
         BestIndex = CandidateIndex;
     }
 
@@ -493,10 +526,26 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
 
     const float DesiredSpeed = ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
 
+    // Kept instantaneous, and used only to gate boost: spending charge while
+    // closing on a car that is about to force a brake is wasted charge.
     bBlockedAhead = DesiredSpeed < CruiseSpeed * 0.9f;
-    BlockedSeconds = bBlockedAhead ? BlockedSeconds + DeltaSeconds : 0.0f;
 
-    ConsiderOvertake(*Vehicle, DesiredSpeed, CruiseSpeed, BotSpeed);
+    // The overtake trigger, deliberately NOT the same test.
+    //
+    // Tied to bBlockedAhead, the rival only began looking for a way out once it
+    // was already down to 0.9 * cruise, which on this traffic is about 66 m
+    // behind a slow car - roughly 1.4 s of warning at closing speed, less than
+    // one merge takes. It therefore always arrived at the follow law's fixed
+    // point first, and from there every option looks equally bad. Comparing the
+    // roll-out against clear road instead raises the alarm while the bot is
+    // still fast and still has room to pick a gap.
+    const float CurrentLaneProjection = ProjectDistance(Gap, LeaderSpeed, CruiseSpeed, BotSpeed);
+    const float FreeProjection = ProjectDistance(BigDistance, 0.0f, CruiseSpeed, BotSpeed);
+
+    const bool bLaneCostsGround = CurrentLaneProjection < FreeProjection - OvertakeDistanceGain;
+    BlockedSeconds = bLaneCostsGround ? BlockedSeconds + DeltaSeconds : 0.0f;
+
+    ConsiderOvertake(*Vehicle, CurrentLaneProjection, CruiseSpeed, BotSpeed);
 
     // ---- Steering ------------------------------------------------------------
     // Yaw authority falls from 105 deg/s toward 33.6 deg/s as speed rises, so a
@@ -627,8 +676,15 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
         && Throttle > KINDA_SMALL_NUMBER
         && BotSpeed >= 900.0f
         && FMath::Abs(SmoothedSteering) < 0.35f
-        && TargetLaneIndex == CurrentLaneIndex
         && RivalContactCooldown <= 0.0f;
+
+    // The same-lane requirement that used to sit in that list is gone. Overtaking
+    // is exactly when a rival should be spending boost, and requiring the merge to
+    // be finished first meant the pass itself was always made on cruise power - so
+    // the bot pulled alongside a car and never got past it. Blocking is already
+    // measured against BOTH the current and the destination lane a few lines up,
+    // so !bBlockedAhead still means "the road I am merging into is clear", and the
+    // steering limit still keeps boost off a hard corrective input.
 
     Vehicle->SetThrottleInput(Throttle);
     Vehicle->SetBrakeInput(Brake);
