@@ -93,6 +93,15 @@ a replicated lane speed. Full plan and rationale in `DECISIONS.md`.
 | N-010 | pending | Per-player race state | N-008 | Score, near misses, collisions and progress move to `AOverlanePlayerState`; the winner scan stops being nested inside the host-pawn null check. |
 | N-011 | pending | Rival proxies and boost visibility | N-008 | Remote cars are extrapolated to now rather than interpolated at a fixed delay, and block in prediction. |
 
+## Backlog — evaluated, deliberately deferred
+
+| ID | Status | Task | Notes |
+|---|---|---|---|
+| B-001 | deferred | Evaluate World Creator for roadside terrain and horizon | Free Community Edition is feature-complete with export disabled, so it can be trialled at zero cost; Indie licence is $99 one-time under $100k revenue, and there is a UE 5.8 bridge. Useful ONLY for the roadside landscape and horizon - the route itself is a flat 6 km straight, which a terrain generator does not help with. Revisit after the free rendering items are done. |
+| B-002 | rejected | Odyssey AI world generation | Wrong category. It streams interactive video from cloud GPUs and IS the engine; it does not export meshes into Unreal. Cannot host our vehicle or traffic. |
+| B-003 | rejected for now | Scenario.gg AI asset generation | $10-200/month subscription, strongest at 2D style-trained assets. We have no texture bottleneck - the road material is authored and working. Reconsider only if a large volume of distinct props is ever needed. |
+| B-004 | deferred | AI-generated vehicles (Rodin Gen-2, Meshy) | Quality is now genuinely usable and paid tiers grant commercial rights (Meshy's FREE tier is CC BY 4.0 and needs attribution). Blocker is unchanged and unsolved by any of them: we need a body plus FOUR separate wheel meshes with origins at hub centres and the spin axis aligned, and they emit a single fused mesh. Splitting and re-pivoting per car is the actual work. Viable for background props, not the hero car. Also: Steam requires disclosing AI content players consume (rules rewritten Jan 2026). |
+
 ## Phase 6 — visual vertical slice
 
 | ID | Status | Task | Depends on | Acceptance criteria |
