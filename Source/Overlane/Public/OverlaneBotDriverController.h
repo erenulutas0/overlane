@@ -321,11 +321,33 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.0"))
     float RubberBandRangeMeters = 120.0f;
 
-    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float BoostEngageCharge = 0.55f;
+    /**
+     * The charge floor below which the rival stops asking for boost.
+     *
+     * This used to be a wide hysteresis band, 0.55 to engage and 0.08 to release,
+     * and that band - not the charge budget - was the whole remaining speed gap to
+     * the human. Measured: the rival held boost 16-28% of a race, and the economy's
+     * own ceiling is BoostRecharge / (BoostDrain + BoostRecharge) = 0.18 / 0.60 =
+     * 30%. It was already spending essentially its entire budget. The human spends
+     * exactly the same 30% and is 60 km/h faster, because of HOW it is spent.
+     *
+     * UArcadeHandlingComponent gates bBoostActive on BoostCharge > 0.01 with no
+     * hysteresis of its own, so a human holding the button flickers boost on and off
+     * frame to frame once drained. Boost acceleration is about 7000 cm/s^2 while the
+     * post-boost decay is only FInterpTo at rate 1.35, so the flicker pins speed at
+     * the equilibrium 0.30 * 7000 = 0.70 * 1.35 * (S - 5000), i.e. S = 7222, which
+     * clamps to MaxBoostSpeed and holds 245 km/h continuously.
+     *
+     * The rival's wide band instead produced 1.12 s on and 2.6 s off; during the off
+     * block the 0.74 s decay constant took it all the way back to 5000, so the same
+     * budget yielded a sawtooth averaging about 212 km/h on clear road. Matching the
+     * component's own floor makes the rival spend like the human does.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.02", ClampMax = "1.0"))
+    float BoostEngageCharge = 0.05f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-    float BoostReleaseCharge = 0.08f;
+    float BoostReleaseCharge = 0.02f;
 
     /** Rubber banding is frozen inside this distance so the finish is honest. */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.0"))

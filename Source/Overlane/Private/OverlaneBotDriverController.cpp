@@ -110,7 +110,11 @@ void AOverlaneBotDriverController::ConfigureDifficulty(int32 Difficulty)
     }
 
     DifficultySpeedScale += RaceStream.FRandRange(-0.015f, 0.015f);
-    BoostEngageCharge = FMath::Clamp(BoostEngageCharge + RaceStream.FRandRange(-0.10f, 0.10f), 0.15f, 0.95f);
+    // Jitter narrowed with the band. At +/-0.10 around a 0.55 engage point this was
+    // moving the rival's whole boost cadence from race to race, which is most of why
+    // cross-run telemetry was unusable. Around a 0.05 floor that spread would also be
+    // meaningless - it would swing the floor by 200%.
+    BoostEngageCharge = FMath::Clamp(BoostEngageCharge + RaceStream.FRandRange(-0.015f, 0.015f), 0.02f, 0.20f);
 }
 
 float AOverlaneBotDriverController::GetBotSpeedKph() const
