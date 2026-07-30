@@ -23,6 +23,14 @@ public:
     int32 GetPoolSize() const { return VehiclePool.Num(); }
 
     /**
+     * Draws traffic lane-change directions from an owned stream instead of the global
+     * RNG, so pinning overlane.Bot.Seed makes a whole race reproducible. With the
+     * global RNG, which way a middle-lane car jinked differed run to run and moved the
+     * very traffic field the rival was being measured against.
+     */
+    FRandomStream LaneChangeStream;
+
+    /**
      * The shared car-following curve: speed ramps linearly from a full stop at
      * MinGap up to the leader's own speed at MaxGap. Exposed as a static so the
      * AI rival follows traffic using exactly the same law traffic follows itself

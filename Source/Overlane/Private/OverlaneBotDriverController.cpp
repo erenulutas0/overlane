@@ -10,6 +10,24 @@
 
 namespace
 {
+    /**
+     * Fixes the rival's per-race jitter so a measurement can be repeated.
+     *
+     * ConfigureDifficulty deliberately jitters DifficultySpeedScale by +/-1.5% and
+     * BoostEngageCharge by +/-0.10 so two races are not identical. That is right for
+     * shipping and wrong for measuring: +/-0.10 on the engage charge materially moves
+     * when boost arms, so telemetry compared BETWEEN runs was partly reading the draw
+     * rather than the change under test. Several cross-run comparisons on this bot
+     * were reported with more confidence than that noise floor supported.
+     *
+     * 0 keeps the shipping behaviour. Non-zero pins every stream that feeds the rival.
+     */
+    static TAutoConsoleVariable<int32> CVarBotSeed(
+        TEXT("overlane.Bot.Seed"),
+        0,
+        TEXT("Rival bot RNG seed. 0 = random per race. Non-zero = fixed, for reproducible measurement."),
+        ECVF_Default);
+
     /** Rebuilding the traffic list every frame is wasteful: pool identity is fixed. */
     constexpr float TrafficCacheInterval = 0.5f;
 
@@ -47,8 +65,13 @@ void AOverlaneBotDriverController::ConfigurePracticeRoute(ATrafficLanePath* InLa
 
 void AOverlaneBotDriverController::ConfigureDifficulty(int32 Difficulty)
 {
-    // Seeded per race so two runs at the same difficulty are not identical.
-    RaceStream.Initialize(FMath::Rand());
+    // Seeded per race so two runs at the same difficulty are not identical, unless
+    // overlane.Bot.Seed pins it. The seed is logged either way, so a run that produced
+    // interesting telemetry can be replayed exactly.
+    const int32 ConfiguredSeed = CVarBotSeed.GetValueOnAnyThread();
+    const int32 UsedSeed = ConfiguredSeed != 0 ? ConfiguredSeed : FMath::Rand();
+    RaceStream.Initialize(UsedSeed);
+    UE_LOG(LogTemp, Log, TEXT("[Overlane] rival seed %d (difficulty %d)"), UsedSeed, Difficulty);
 
     switch (FMath::Clamp(Difficulty, 0, 2))
     {
@@ -135,10 +158,30 @@ const ATrafficVehicleBase* AOverlaneBotDriverController::FindNearestBlocker(
             continue;
         }
 
-        const float Gap = Other->GetLaneDistance() - FromDistance - BumperAllowance;
-        if (Gap > 0.0f && Gap < OutGap)
+        // "Is it ahead" and "how much clear air is there" are separate questions,
+        // and conflating them made the bot BLIND in the one band that matters.
+        //
+        // This used to subtract BumperAllowance first and then test Gap > 0, so any
+        // car whose raw lead was between 0 and 520 cm produced a negative gap and was
+        // skipped entirely. The bot then took the NEXT car, 3500 cm further on, as its
+        // leader and applied throttle into the back of the one it was already
+        // overlapping - the swept offset stopped it and the collision speed cut
+        // punished it, from a state it could not see coming.
+        //
+        // Ahead-ness is decided on the raw lead; the reported clearance floors at
+        // zero, which drives ComputeFollowSpeed into its sub-buffer branch and trips
+        // the EmergencyGap full brake. That is the correct response to overlapping a
+        // car, and it is now reachable.
+        const float RawLead = Other->GetLaneDistance() - FromDistance;
+        if (RawLead <= 0.0f)
         {
-            OutGap = Gap;
+            continue;
+        }
+
+        const float Clearance = FMath::Max(0.0f, RawLead - BumperAllowance);
+        if (Clearance < OutGap)
+        {
+            OutGap = Clearance;
             OutLeaderSpeed = Other->GetCurrentSpeed();
             Best = Other;
         }
@@ -534,7 +577,20 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
 
     // Kept instantaneous, and used only to gate boost: spending charge while
     // closing on a car that is about to force a brake is wasted charge.
-    bBlockedAhead = DesiredSpeed < CruiseSpeed * 0.9f;
+    //
+    // Measured against the UNBOOSTED ceiling, deliberately. Against CruiseSpeed this
+    // was a self-lock that made boost dead code in traffic, which is why allowing
+    // boost during a merge changed nothing at all:
+    //   boost armed   -> CruiseSpeed 6800 -> needs DesiredSpeed >= 6120 -> Gap >= 4645
+    //   boost disarmed -> CruiseSpeed 5000 -> needs DesiredSpeed >= 4500 -> Gap >= 2103
+    // The field is packed at TrafficSpacing 3500 minus BumperAllowance, so 2980 cm is
+    // the largest gap that exists. Arming boost moved the bar from reachable to
+    // unreachable, bWantsBoost also requires bBoostEngaged so the reachable window
+    // was unusable, and because boost never fired the charge never drained - so it
+    // stayed armed forever. The rival never boosted in traffic at any difficulty.
+    // A fixed reference means arming boost cannot move its own goalposts.
+    const float BlockedReference = 5000.0f * RubberBandedScale;
+    bBlockedAhead = DesiredSpeed < BlockedReference * 0.9f;
 
     // The overtake trigger, deliberately NOT the same test.
     //

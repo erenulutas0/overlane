@@ -17,6 +17,16 @@ void ATrafficDirector::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Shares the rival's seed rather than declaring a second one: a reproducible
+    // measurement needs the traffic field pinned too, and half-reproducible is no
+    // more useful than not reproducible at all.
+    int32 Seed = 0;
+    if (const IConsoleVariable* SeedVar = IConsoleManager::Get().FindConsoleVariable(TEXT("overlane.Bot.Seed")))
+    {
+        Seed = SeedVar->GetInt();
+    }
+    LaneChangeStream.Initialize(Seed != 0 ? Seed : FMath::Rand());
+
     // This actor is created by the authoritative GameMode. Only the server
     // creates and drives the reusable pool; individual traffic actors
     // replicate their visual state and transforms to connected players.
@@ -503,7 +513,13 @@ void ATrafficDirector::TryStartGuardedLaneChange()
             continue;
         }
 
-        const int32 Direction = CurrentLaneIndex == 0 ? 1 : (CurrentLaneIndex == AvailableLanes.Num() - 1 ? -1 : (FMath::RandBool() ? -1 : 1));
+        // Drawn from a director-owned stream rather than FMath::RandBool(), so that
+        // pinning overlane.Bot.Seed makes a whole race reproducible. With the global
+        // RNG here, which way a middle-lane car jinked differed between runs and moved
+        // the traffic field the rival was being measured against.
+        const int32 Direction = CurrentLaneIndex == 0
+            ? 1
+            : (CurrentLaneIndex == AvailableLanes.Num() - 1 ? -1 : (LaneChangeStream.RandRange(0, 1) == 0 ? -1 : 1));
         ATrafficLanePath* TargetLane = AvailableLanes[CurrentLaneIndex + Direction];
         if (IsLaneChangeSafe(Vehicle, TargetLane) && Vehicle->BeginLaneChange(TargetLane, LaneChangeDuration))
         {
