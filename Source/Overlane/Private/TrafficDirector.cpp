@@ -325,15 +325,32 @@ void ATrafficDirector::ActivateVehicle(int32 VehicleIndex)
         FVector CollisionExtent;
     };
 
-    // The initial order preserves same-lane spacing: slowest is nearest the player,
-    // medium is ahead of it, and fastest is furthest away.
+    // Highway speeds, in cm/s. The previous set ran 38-76 km/h, which is urban
+    // traffic, and it was doing far more damage than it looked.
+    //
+    // The rival's follow law makes it an exact speed copy of whatever it settles
+    // behind, so a 50 km/h Commuter capped the rival at 50 km/h against a player
+    // doing 245 - it read as "the bot drives like a traffic car" because it
+    // literally was one. Three rounds of work on the overtake logic could not fix
+    // that, because the ceiling was never in the overtake logic.
+    //
+    // It also drove the merge windows. Clearance scales with the SQUARE of closing
+    // speed, so cutting closing from ~195 km/h to ~115 km/h takes the gap the
+    // rival needs from 31 m to about 18 m, against a director that packs lanes at
+    // 35 m. The same change that makes the road read as a motorway is the one that
+    // makes overtaking geometrically possible.
+    //
+    // Truck stays slowest at 83 km/h: heavy vehicles really are speed-limited, so
+    // it is both the honest choice and the thing that keeps a reason to overtake.
+    // The Commuter/Coupe/Sport ordering is preserved because slot order depends on
+    // it for initial same-lane spacing.
     static const FTrafficProfile TrafficProfiles[] =
     {
-        { FLinearColor(1.0f, 0.28f, 0.16f), 1400.0f, TEXT("Commuter"), FVector(4.2f, 1.9f, 1.3f), FVector(210.0f, 95.0f, 65.0f) },
-        { FLinearColor(0.15f, 0.55f, 1.0f), 1750.0f, TEXT("Coupe"), FVector(3.8f, 1.75f, 1.05f), FVector(190.0f, 88.0f, 55.0f) },
-        { FLinearColor(1.0f, 0.78f, 0.12f), 2100.0f, TEXT("Sport"), FVector(4.5f, 1.85f, 0.95f), FVector(225.0f, 92.0f, 52.0f) },
-        { FLinearColor(0.22f, 0.72f, 0.38f), 1550.0f, TEXT("SUV"), FVector(4.6f, 2.1f, 1.55f), FVector(230.0f, 105.0f, 82.0f) },
-        { FLinearColor(0.35f, 0.75f, 0.42f), 1050.0f, TEXT("Truck"), FVector(6.5f, 2.15f, 2.1f), FVector(325.0f, 108.0f, 105.0f) }
+        { FLinearColor(1.0f, 0.28f, 0.16f), 2800.0f, TEXT("Commuter"), FVector(4.2f, 1.9f, 1.3f), FVector(210.0f, 95.0f, 65.0f) },
+        { FLinearColor(0.15f, 0.55f, 1.0f), 3200.0f, TEXT("Coupe"), FVector(3.8f, 1.75f, 1.05f), FVector(190.0f, 88.0f, 55.0f) },
+        { FLinearColor(1.0f, 0.78f, 0.12f), 3600.0f, TEXT("Sport"), FVector(4.5f, 1.85f, 0.95f), FVector(225.0f, 92.0f, 52.0f) },
+        { FLinearColor(0.22f, 0.72f, 0.38f), 3000.0f, TEXT("SUV"), FVector(4.6f, 2.1f, 1.55f), FVector(230.0f, 105.0f, 82.0f) },
+        { FLinearColor(0.35f, 0.75f, 0.42f), 2300.0f, TEXT("Truck"), FVector(6.5f, 2.15f, 2.1f), FVector(325.0f, 108.0f, 105.0f) }
     };
 
     const int32 SlotIndex = VehicleIndex % GetSlotsPerLane();
