@@ -252,12 +252,40 @@ private:
      * made the window wider than the gaps the traffic director actually creates -
      * so the rival could essentially never change lane and sat behind whatever
      * was in front of it for the rest of the race.
+     *
+     * But it must stay ABOVE EmergencyGap, and at 250 it did not. The gate authorised
+     * a merge at MergeBufferAhead + BumperAllowance = 770 cm of raw lead;
+     * FindNearestBlocker then reports the clearance, 770 - 520 = 250 cm, which is
+     * under EmergencyGap 600, so the throttle law slammed Brake = 1.0 at 7200 cm/s^2
+     * on the very frame the merge was authorised. Traced from the fixed point, the
+     * rival ended a "pass" 5.96 m FURTHER behind the car it set out to overtake than
+     * when it started. The gate and the follow law have to agree, or the gate is just
+     * authorising panic stops.
      */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
-    float MergeBufferAhead = 250.0f;
+    float MergeBufferAhead = 650.0f;
 
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.0"))
     float MergeBufferBehind = 150.0f;
+
+    /**
+     * How far across the lane the rival must be before the car it is passing stops
+     * governing its speed, as a fraction of the 600 cm lane spacing.
+     *
+     * Perception used to take min(home lane, destination lane) for the whole crossing.
+     * A pass is committed from the follow-law fixed point, where the home leader's
+     * clearance is exactly MinimumFollowingDistance, so that min pinned the speed
+     * target to the speed of the very car being passed for the entire 1.2-1.6 s
+     * crossing: the rival translated sideways at the target's speed and arrived
+     * alongside having gained nothing. That is a lane change, not an overtake, and it
+     * is precisely the behaviour reported five times.
+     *
+     * The home car cannot simply be ignored - the bot is still physically in that lane
+     * until it is laterally clear - so it applies as a weighted floor that fades to
+     * nothing by this fraction, rather than as a hard minimum throughout.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Overtake", meta = (ClampMin = "0.05", ClampMax = "1.0"))
+    float LateralClearFraction = 0.55f;
 
     // --- Difficulty ----------------------------------------------------------
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Difficulty", meta = (ClampMin = "0.0"))

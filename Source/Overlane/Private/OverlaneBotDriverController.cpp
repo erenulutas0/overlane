@@ -94,8 +94,12 @@ void AOverlaneBotDriverController::ConfigureDifficulty(int32 Difficulty)
         // gaps sooner, recovers between passes faster, and accepts less margin.
         BlockedTimeToOvertake = 0.22f;
         PostMergeCooldown = 0.6f;
-        MergeBufferAhead = 180.0f;
+        // Still floored above EmergencyGap: a hard rival accepts less margin, but
+        // authorising a merge the follow law will answer with a full brake makes it
+        // slower, not harder. It also crosses sooner before yielding the home lane.
+        MergeBufferAhead = 620.0f;
         MergeBufferBehind = 110.0f;
+        LateralClearFraction = 0.45f;
         break;
     default:
         DifficultySpeedScale = 1.0f;
@@ -504,12 +508,19 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     const float BotSpeed = Vehicle->GetForwardSpeedCms();
 
     // ---- Lane change progress ------------------------------------------------
+    // 1.0 means "not crossing, or laterally arrived"; 0.0 means "still on the home
+    // lane centre". Read below to decide how much the car being passed still governs.
+    float CrossingProgress = 1.0f;
+
     if (TargetLaneIndex != CurrentLaneIndex)
     {
         LaneChangeElapsed += DeltaSeconds;
 
         const FTransform TargetLaneTransform = SteerLane->GetTransformAtDistance(TrackedLaneDistance);
         const float LateralOffset = FMath::Abs(TargetLaneTransform.GetLocation().Y - Vehicle->GetActorLocation().Y);
+
+        // Lanes are TrafficLaneSpacing apart, so the remaining offset IS the progress.
+        CrossingProgress = FMath::Clamp(1.0f - (LateralOffset / 600.0f), 0.0f, 1.0f);
 
         // Position alone is not enough: the car reaches the tolerance band still
         // carrying outward yaw, and nothing sheds it, which is where most of the
@@ -543,20 +554,34 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     }
 
     // ---- Perception ----------------------------------------------------------
+    //
+    // The DESTINATION lane sets the speed target; the lane being left applies only a
+    // floor that fades as the bot crosses. Outside a merge these are the same lane, so
+    // this is the ordinary follow law.
+    //
+    // The old form took min(home, destination) for the whole crossing, and that single
+    // min is why the rival never overtook anything. A pass is committed from the
+    // follow-law fixed point, where the home leader's clearance is exactly
+    // MinimumFollowingDistance and ComputeFollowSpeed therefore returns the home
+    // leader's speed EXACTLY. Taking the min pinned the target to that value for the
+    // entire crossing, so the bot translated sideways at the speed of the car it was
+    // trying to pass and arrived alongside having gained nothing.
     float Gap = BigDistance;
     float LeaderSpeed = 0.0f;
-    const ATrafficVehicleBase* Blocker = FindNearestBlocker(ActiveLane, TrackedLaneDistance, Gap, LeaderSpeed);
+    FindNearestBlocker(SteerLane, TrackedLaneDistance, Gap, LeaderSpeed);
 
-    // While merging, the target lane blocks us too.
+    float HomeGap = BigDistance;
+    float HomeLeaderSpeed = 0.0f;
+    float HomeOverlap = 0.0f;
     if (TargetLaneIndex != CurrentLaneIndex)
     {
-        float TargetGap = BigDistance;
-        float TargetLeaderSpeed = 0.0f;
-        if (FindNearestBlocker(SteerLane, TrackedLaneDistance, TargetGap, TargetLeaderSpeed) && TargetGap < Gap)
+        // The bot is still physically in the home lane until it is laterally clear, so
+        // the car being passed can still be hit. Weight it by how much of the bot is
+        // still in that lane rather than dropping it outright.
+        HomeOverlap = 1.0f - FMath::Clamp(CrossingProgress / FMath::Max(LateralClearFraction, KINDA_SMALL_NUMBER), 0.0f, 1.0f);
+        if (HomeOverlap > 0.0f && !FindNearestBlocker(ActiveLane, TrackedLaneDistance, HomeGap, HomeLeaderSpeed))
         {
-            Gap = TargetGap;
-            LeaderSpeed = TargetLeaderSpeed;
-            Blocker = nullptr;
+            HomeOverlap = 0.0f;
         }
     }
 
@@ -573,7 +598,17 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     const float BoostCeiling = (bAllowBoost && bBoostEngaged) ? 6800.0f : 5000.0f;
     const float CruiseSpeed = BoostCeiling * RubberBandedScale;
 
-    const float DesiredSpeed = ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
+    float DesiredSpeed = ComputeFollowSpeed(Gap, LeaderSpeed, CruiseSpeed);
+
+    // The car being passed, weighted by how much of the bot still shares its lane.
+    // At HomeOverlap 1 this is the old hard min, which is correct while the bot is
+    // still on the home lane centre; by LateralClearFraction it is gone and the pass
+    // speed answers only to the destination lane. This is the whole overtake.
+    if (HomeOverlap > 0.0f)
+    {
+        const float HomeLimit = ComputeFollowSpeed(HomeGap, HomeLeaderSpeed, CruiseSpeed);
+        DesiredSpeed = FMath::Lerp(DesiredSpeed, FMath::Min(DesiredSpeed, HomeLimit), HomeOverlap);
+    }
 
     // Kept instantaneous, and used only to gate boost: spending charge while
     // closing on a car that is about to force a brake is wasted charge.
@@ -683,7 +718,13 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
         // These are mutually exclusive in the handling component: any non-zero
         // throttle makes the brake branch unreachable.
         const float SpeedError = DesiredSpeed - BotSpeed;
-        if (Gap < EmergencyGap)
+
+        // The emergency test is physical, so it takes the nearer of the two lanes
+        // whenever the bot still overlaps the one it is leaving. The speed TARGET
+        // above releases the home car progressively; a collision does not care about
+        // that weighting, only about whether a car is actually there.
+        const float EmergencyRelevantGap = HomeOverlap > 0.0f ? FMath::Min(Gap, HomeGap) : Gap;
+        if (EmergencyRelevantGap < EmergencyGap)
         {
             Brake = 1.0f;
         }
