@@ -110,7 +110,7 @@ private:
     // --- Following -----------------------------------------------------------
     /** Buffer held at matched speed, mirroring the traffic director's constant. */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1.0"))
-    float MinimumFollowingDistance = 1200.0f;
+    float MinimumFollowingDistance = 900.0f;
 
     /**
      * The deceleration the follow law plans around, well below the pawn's
@@ -121,9 +121,25 @@ private:
      * -> wider window -> follow engages -> brake -> narrower window -> follow
      * disengages -> full throttle, cycling forever. The law below is continuous
      * and monotonic in gap, so it has no threshold to cross.
+     *
+     * 3600 is half the pawn's own BrakingDeceleration, not the commuter figure it
+     * started at. With the structural defects cleared - the blind near band, the boost
+     * self-lock, the panic-stop authorisation, the pass speed pinned to the car being
+     * passed - THIS is what was left holding the rival at traffic pace, and it is one
+     * constant reaching four systems at once:
+     *   follow law    surplus over the leader rises by sqrt(3600/1600) = 1.5x, so at a
+     *                 2980 cm gap the target goes from leader+2387 to leader+3580
+     *   boost gate    the gap needed to clear bBlockedAhead falls 2103 -> 1601 cm,
+     *                 which the 3500 cm platoon pitch actually supplies
+     *   lane scoring  ComputeLaneProjectedDistance runs this same law, so lanes with
+     *                 room finally out-score the current one and RejectedByGain drops
+     *   merge safety  the behind branch needs less room, which was never the binding
+     *                 constraint but does no harm
+     * The pawn can still brake at 7200, so an authorised plan always has headroom, and
+     * the EmergencyGap full brake remains the backstop underneath all of it.
      */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1440.0"))
-    float ComfortDeceleration = 1600.0f;
+    float ComfortDeceleration = 3600.0f;
 
     /**
      * The deceleration a MERGE is planned around, as opposed to cruising.
