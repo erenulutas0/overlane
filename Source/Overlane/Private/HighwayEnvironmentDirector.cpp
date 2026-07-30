@@ -70,10 +70,10 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
     LeftShoulder->SetupAttachment(SceneRoot);
     RightShoulder = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RightShoulder"));
     RightShoulder->SetupAttachment(SceneRoot);
-    LeftGuardRail = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("LeftGuardRail"));
-    LeftGuardRail->SetupAttachment(SceneRoot);
-    RightGuardRail = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RightGuardRail"));
-    RightGuardRail->SetupAttachment(SceneRoot);
+    GuardRailPosts = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("GuardRailPosts"));
+    GuardRailPosts->SetupAttachment(SceneRoot);
+    GuardRailBeams = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("GuardRailBeams"));
+    GuardRailBeams->SetupAttachment(SceneRoot);
 
     LaneDashes = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("LaneDashes"));
     LaneDashes->SetupAttachment(SceneRoot);
@@ -149,11 +149,16 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
         RoadSurfaceMaterial = RoadMaterialFinder.Object;
     }
 
-    for (UStaticMeshComponent* Component : { LeftLandscape, RightLandscape, RoadSurface, LeftShoulder, RightShoulder, LeftGuardRail, RightGuardRail })
+    for (UStaticMeshComponent* Component : { LeftLandscape, RightLandscape, RoadSurface, LeftShoulder, RightShoulder })
     {
         Component->SetStaticMesh(CubeMesh);
         ConfigureVisualMesh(Component);
     }
+
+    GuardRailPosts->SetStaticMesh(CubeMesh);
+    ConfigureVisualMesh(GuardRailPosts);
+    GuardRailBeams->SetStaticMesh(CubeMesh);
+    ConfigureVisualMesh(GuardRailBeams);
 
     LaneDashes->SetStaticMesh(CubeMesh);
     EdgeReflectors->SetStaticMesh(CubeMesh);
@@ -309,12 +314,9 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
         Shoulder.Key->SetMaterial(0, ShoulderMaterial);
     }
 
-    for (const TPair<UStaticMeshComponent*, float>& GuardRail : { TPair<UStaticMeshComponent*, float>(LeftGuardRail, -1180.0f), TPair<UStaticMeshComponent*, float>(RightGuardRail, 1180.0f) })
-    {
-        GuardRail.Key->SetRelativeLocation(FVector(RouteLength * 0.5f, GuardRail.Value, 120.0f));
-        GuardRail.Key->SetRelativeScale3D(FVector(VisualRouteLength / CubeSize, 0.12f, 0.09f));
-        GuardRail.Key->SetMaterial(0, RailMaterial);
-    }
+    GuardRailPosts->SetMaterial(0, RailMaterial);
+    GuardRailBeams->SetMaterial(0, RailMaterial);
+    BuildGuardRail();
 
     LaneDashes->SetMaterial(0, CreateColorMaterial(FLinearColor(0.92f, 0.92f, 0.86f)));
     EdgeReflectors->SetMaterial(0, CreateColorMaterial(FLinearColor(1.0f, 0.72f, 0.10f)));
@@ -377,6 +379,53 @@ void AHighwayEnvironmentDirector::AddLaneMarkings()
     {
         EdgeReflectors->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, -940.0f, VisualRoadZ + 7.0f), FVector(3.2f, 0.13f, 0.03f)));
         EdgeReflectors->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, 940.0f, VisualRoadZ + 7.0f), FVector(3.2f, 0.13f, 0.03f)));
+    }
+}
+
+void AHighwayEnvironmentDirector::BuildGuardRail()
+{
+    GuardRailPosts->ClearInstances();
+    GuardRailBeams->ClearInstances();
+
+    // Real motorway W-beam: posts every ~4 m, beam ~31 cm deep with its top at about
+    // 70 cm. The old single stretched box was 9 cm tall and 6.3 km long, which is both
+    // the wrong height and - more damagingly - the wrong SILHOUETTE. At speed the
+    // repeating post rhythm is most of what sells motion; an unbroken ribbon gives the
+    // eye nothing to clock against.
+    constexpr float PostSpacing = 400.0f;
+    constexpr float BeamTopZ = 70.0f;
+    constexpr float BeamHeight = 31.0f;
+    constexpr float BeamCentreZ = BeamTopZ - (BeamHeight * 0.5f);
+    constexpr float RailY = 1180.0f;
+
+    // A visible seam between segments, which is what a real bolted run looks like.
+    constexpr float BeamGap = 12.0f;
+    const float BeamLength = PostSpacing - BeamGap;
+
+    for (const float Side : { -1.0f, 1.0f })
+    {
+        const float Y = Side * RailY;
+
+        for (float X = 0.0f; X < RouteLength; X += PostSpacing)
+        {
+            // Post: square section, sunk so its base is below the shoulder line.
+            GuardRailPosts->AddInstance(FTransform(
+                FRotator::ZeroRotator,
+                FVector(X, Y, BeamTopZ * 0.5f),
+                FVector(0.14f, 0.14f, BeamTopZ / CubeSize)));
+
+            // Beam spanning to the next post, offset road-side of the post as real
+            // W-beam is, so the posts read as being BEHIND the rail rather than
+            // inside it.
+            const float BeamCentreX = X + (PostSpacing * 0.5f);
+            if (BeamCentreX + (BeamLength * 0.5f) <= RouteLength)
+            {
+                GuardRailBeams->AddInstance(FTransform(
+                    FRotator::ZeroRotator,
+                    FVector(BeamCentreX, Y - (Side * 9.0f), BeamCentreZ),
+                    FVector(BeamLength / CubeSize, 0.10f, BeamHeight / CubeSize)));
+            }
+        }
     }
 }
 

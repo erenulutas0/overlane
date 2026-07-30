@@ -45,6 +45,9 @@ private:
     UMaterialInstanceDynamic* CreateSurfaceMaterial(UMaterialInterface* Override, const FLinearColor& Tint) const;
     void BuildVisualRoute();
     void AddLaneMarkings();
+    /** Instances the posts and beam segments that replaced the stretched rail box. */
+    void BuildGuardRail();
+
     void AddRoadsideFurniture();
     void AddHeroDistrict();
     void AddHeroServiceAreas();
@@ -133,11 +136,23 @@ private:
     UPROPERTY(VisibleAnywhere, Category = "Highway")
     TObjectPtr<UStaticMeshComponent> RightShoulder;
 
+    /**
+     * The guardrail as posts and beam segments rather than one stretched box.
+     *
+     * It used to be two UStaticMeshComponents scaled to (6300, 0.12, 0.09) - a single
+     * unbroken 6.3 km ribbon 9 cm tall. Silhouette is the tell no texture can fix: a
+     * real barrier reads as a repeating rhythm of posts with a beam running between
+     * them, and at 245 km/h that rhythm is most of the sensation of speed. A
+     * continuous ribbon gives the eye nothing to clock against, which is a large part
+     * of why the road has read as a toy.
+     *
+     * Instanced rather than one mesh each, so the whole run is still two draw calls.
+     */
     UPROPERTY(VisibleAnywhere, Category = "Highway")
-    TObjectPtr<UStaticMeshComponent> LeftGuardRail;
+    TObjectPtr<UInstancedStaticMeshComponent> GuardRailPosts;
 
     UPROPERTY(VisibleAnywhere, Category = "Highway")
-    TObjectPtr<UStaticMeshComponent> RightGuardRail;
+    TObjectPtr<UInstancedStaticMeshComponent> GuardRailBeams;
 
     UPROPERTY(VisibleAnywhere, Category = "Highway")
     TObjectPtr<UInstancedStaticMeshComponent> LaneDashes;
