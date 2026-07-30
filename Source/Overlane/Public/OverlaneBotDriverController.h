@@ -46,6 +46,20 @@ public:
     int32 GetRejectedBySafety() const { return RejectedBySafety; }
     bool IsBoostEngaged() const { return bBoostEngaged; }
 
+    /**
+     * Share of driving time the rival has actually HELD boost, 0-1.
+     *
+     * The HUD used to report IsBoostEngaged(), which is only the charge latch -
+     * "there is enough charge to start" - and says nothing about whether boost is
+     * being applied. It read TURBO:HAZIR for entire races in which the rival never
+     * boosted once, and both I and the player took that as evidence boost was
+     * working. A duty cycle cannot be misread that way.
+     */
+    float GetBoostDutyCycle() const { return DrivingSeconds > KINDA_SMALL_NUMBER ? BoostActiveSeconds / DrivingSeconds : 0.0f; }
+
+    /** Which difficulty tier actually took effect, so the HUD can show it. */
+    int32 GetAppliedDifficulty() const { return AppliedDifficulty; }
+
 protected:
     virtual void Tick(float DeltaSeconds) override;
 
@@ -343,5 +357,12 @@ private:
     int32 RejectedBySafety = 0;
     bool bBlockedAhead = false;
     bool bBoostEngaged = false;
+
+    /** Measured, not inferred: how long boost was actually commanded. */
+    float BoostActiveSeconds = 0.0f;
+    float DrivingSeconds = 0.0f;
+
+    /** The tier ConfigureDifficulty actually applied, for the HUD readout. */
+    int32 AppliedDifficulty = 1;
     bool bWasRivalContactActive = false;
 };

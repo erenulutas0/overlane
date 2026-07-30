@@ -405,8 +405,9 @@ FString AOverlaneGameModeBase::GetRivalDebugText() const
     }
 
     const float BlockerGap = PracticeBotController->GetTrackedGapMeters();
+    static const TCHAR* DifficultyNames[] = { TEXT("KOLAY"), TEXT("NORMAL"), TEXT("ZOR") };
     return FString::Printf(
-        TEXT("BOT: %d KM/H  ONDEKI: %s  SERIT %d  MERGE %d/%d  RED kazanc:%d guvenlik:%d  TURBO:%s"),
+        TEXT("BOT: %d KM/H  ONDEKI: %s  SERIT %d  MERGE %d/%d  RED kazanc:%d guvenlik:%d  TURBO:%%%d  ZORLUK:%s"),
         FMath::RoundToInt(PracticeBotController->GetBotSpeedKph()),
         BlockerGap < 0.0f ? TEXT("YOK") : *FString::Printf(TEXT("%d M"), FMath::RoundToInt(BlockerGap)),
         PracticeBotController->GetCurrentLaneIndex(),
@@ -414,7 +415,11 @@ FString AOverlaneGameModeBase::GetRivalDebugText() const
         PracticeBotController->GetMergesStarted(),
         PracticeBotController->GetRejectedByGain(),
         PracticeBotController->GetRejectedBySafety(),
-        PracticeBotController->IsBoostEngaged() ? TEXT("HAZIR") : TEXT("-"));
+        // The share of the race boost was actually HELD, not whether there is charge
+        // to start. The old TEXT("HAZIR") readout came from the charge latch and sat
+        // there for whole races in which the rival never boosted at all.
+        FMath::RoundToInt(PracticeBotController->GetBoostDutyCycle() * 100.0f),
+        DifficultyNames[FMath::Clamp(PracticeBotController->GetAppliedDifficulty(), 0, 2)]);
 }
 
 int32 AOverlaneGameModeBase::GetRivalGapMeters() const

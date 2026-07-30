@@ -71,7 +71,8 @@ void AOverlaneBotDriverController::ConfigureDifficulty(int32 Difficulty)
     const int32 ConfiguredSeed = CVarBotSeed.GetValueOnAnyThread();
     const int32 UsedSeed = ConfiguredSeed != 0 ? ConfiguredSeed : FMath::Rand();
     RaceStream.Initialize(UsedSeed);
-    UE_LOG(LogTemp, Log, TEXT("[Overlane] rival seed %d (difficulty %d)"), UsedSeed, Difficulty);
+    AppliedDifficulty = FMath::Clamp(Difficulty, 0, 2);
+    UE_LOG(LogTemp, Log, TEXT("[Overlane] rival seed %d (difficulty %d)"), UsedSeed, AppliedDifficulty);
 
     switch (FMath::Clamp(Difficulty, 0, 2))
     {
@@ -788,6 +789,14 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     // measured against BOTH the current and the destination lane a few lines up,
     // so !bBlockedAhead still means "the road I am merging into is clear", and the
     // steering limit still keeps boost off a hard corrective input.
+
+    // Measured here rather than inferred from the charge latch, because the latch
+    // reported "ready" through entire races in which boost was never applied once.
+    DrivingSeconds += DeltaSeconds;
+    if (bWantsBoost)
+    {
+        BoostActiveSeconds += DeltaSeconds;
+    }
 
     Vehicle->SetThrottleInput(Throttle);
     Vehicle->SetBrakeInput(Brake);
