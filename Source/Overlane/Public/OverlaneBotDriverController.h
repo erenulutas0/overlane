@@ -125,6 +125,26 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1440.0"))
     float ComfortDeceleration = 1600.0f;
 
+    /**
+     * The deceleration a MERGE is planned around, as opposed to cruising.
+     *
+     * These are two different questions and sharing one number for both was a
+     * structural lockout. ComfortDeceleration is how gently the bot wants to trail
+     * a car it has decided to sit behind. Threading a gap is not that: a racer
+     * commits to the gap and then brakes hard. Planning the merge at 1600 cm/s^2
+     * demanded 78 m of clear road in the target lane at a 4750 cm/s closing speed,
+     * against traffic the director packs at 35 m - so the rival rejected 6682
+     * merges on safety in a single run while completing 8.
+     *
+     * Two thirds of the pawn's own BrakingDeceleration of 7200, so the authorised
+     * merge always has 1.5x more stopping power in reserve than it assumed. The
+     * follow law still plans at the comfort figure once settled, which is why the
+     * bot brakes to 1.0 immediately after taking a tight gap - that is intended,
+     * and it is the same saturation the EmergencyGap branch relies on.
+     */
+    UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "1600.0"))
+    float MergeDeceleration = 4800.0f;
+
     /** Bot half-length plus the largest traffic half-length, rounded up. */
     UPROPERTY(EditDefaultsOnly, Category = "Practice Bot|Following", meta = (ClampMin = "0.0"))
     float BumperAllowance = 520.0f;

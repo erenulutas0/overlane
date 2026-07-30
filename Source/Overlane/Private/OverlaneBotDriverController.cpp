@@ -212,9 +212,15 @@ bool AOverlaneBotDriverController::IsLaneChangeSafeForBot(
             // bot could therefore essentially never change lane. It is fine to
             // merge into a smaller gap and settle back afterwards; that is what
             // the follow law is for.
+            // Planned at MergeDeceleration, not ComfortDeceleration. The bot is
+            // deciding whether it CAN take this gap, not how gently it would like
+            // to trail the car once it is in it. Only lanes that already beat the
+            // current one on projected ground reach this test, so "is it worth it"
+            // is settled by the time we get here; the only question left is
+            // physical, and physically the pawn can brake at 7200.
             const float Closing = FMath::Max(0.0f, BotSpeed - OtherSpeed);
             const float Required = MergeBufferAhead + BumperAllowance
-                + ((Closing * Closing) / (2.0f * ComfortDeceleration));
+                + ((Closing * Closing) / (2.0f * MergeDeceleration));
             if (RelativeDistance < Required)
             {
                 return false;
