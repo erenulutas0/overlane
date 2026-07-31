@@ -83,6 +83,30 @@ commercial release included. All these packs are flagged **"allow AI use: No"**,
 does not restrict shipping them in the game but does rule them out as training input
 for the `B-004` AI-vehicle backlog item.
 
+### Downloading: use the in-editor Fab browser, not the launcher
+
+UE 5.8 ships the Fab plugin (`Engine/Plugins/Fab/Fab.uplugin`, `EnabledByDefault: true`).
+Open **Overlane itself** in the editor → **Window ▸ Fab** → sign in → **My Library** →
+**Add to Project**. Content lands straight in `E:\Overlane\Content\<Pack>`. This
+bypasses the launcher's broken *Add to Project* dialog entirely.
+
+Two format traps, both of which cost time here:
+
+- **"Complete project"** listings (e.g. Vehicle Variety Pack **Volume 2**) can only
+  *create* a project — they never show *Add to Project*. Only **"Asset package"**
+  listings can be added to an existing project.
+- Engine-version ceilings are per listing; check *İçerdiği biçimler* before trying.
+
+### Downloaded packs are NOT in git
+
+`/Content/VehicleVarietyPack/` is gitignored. It is 1.4 GB and `.gitattributes` routes
+`*.uasset` to Git LFS, whose free quota is 1 GB storage / 1 GB month bandwidth — one
+pack would exceed it. The packs are re-downloadable from the Fab library at any time.
+
+The code degrades gracefully: `ATrafficVehicleBase`'s `FObjectFinder`s return null when
+the pack is absent and every traffic profile falls back to the previous SportsCar
+assembly, so a fresh clone runs without downloading anything.
+
 ### The "Uyumlu kullanıcı projesi bulunamadı" trap
 
 Fab's *Add to Project* lists **nothing at all**, even for packs that support 5.8. Two

@@ -101,6 +101,21 @@ ATrafficVehicleBase::ATrafficVehicleBase()
     TemplateSportsCarWheelMesh = SportsCarWheelMesh.Object;
     bUsesTemplateSportsCar = TemplateSportsCarBodyMesh && TemplateSportsCarGlassMesh && TemplateSportsCarWheelMesh;
 
+    // Vehicle Variety Pack bodies. Fetched with FObjectFinder rather than hard
+    // requirements: if the pack is absent the pointers stay null and every profile
+    // falls back to the SportsCar assembly exactly as before, so a fresh clone
+    // without the download still runs.
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> VarietyHatchback(TEXT("/Game/VehicleVarietyPack/Meshes/SM_Hatchback.SM_Hatchback"));
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> VarietyPickup(TEXT("/Game/VehicleVarietyPack/Meshes/SM_Pickup.SM_Pickup"));
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> VarietySportsCar(TEXT("/Game/VehicleVarietyPack/Meshes/SM_SportsCar.SM_SportsCar"));
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> VarietySUV(TEXT("/Game/VehicleVarietyPack/Meshes/SM_SUV.SM_SUV"));
+    static ConstructorHelpers::FObjectFinder<UStaticMesh> VarietyBoxTruck(TEXT("/Game/VehicleVarietyPack/Meshes/SM_Truck_Box.SM_Truck_Box"));
+    if (VarietyHatchback.Succeeded()) { VarietyHatchbackMesh = VarietyHatchback.Object; }
+    if (VarietyPickup.Succeeded()) { VarietyPickupMesh = VarietyPickup.Object; }
+    if (VarietySportsCar.Succeeded()) { VarietySportsCarMesh = VarietySportsCar.Object; }
+    if (VarietySUV.Succeeded()) { VarietySUVMesh = VarietySUV.Object; }
+    if (VarietyBoxTruck.Succeeded()) { VarietyBoxTruckMesh = VarietyBoxTruck.Object; }
+
     static ConstructorHelpers::FObjectFinder<UStaticMesh> OffroadBodyMesh(TEXT("/Game/Vehicles/OffroadCar/SM_Offroad_Body.SM_Offroad_Body"));
     static ConstructorHelpers::FObjectFinder<UStaticMesh> OffroadTireMesh(TEXT("/Game/Vehicles/OffroadCar/SM_Offroad_Tire.SM_Offroad_Tire"));
     TemplateOffroadBodyMesh = OffroadBodyMesh.Object;
@@ -402,7 +417,21 @@ void ATrafficVehicleBase::ApplyTrafficVisualState()
         VehicleMaterial->SetVectorParameterValue(TEXT("Color"), TrafficColor);
     }
 
-    if (bUsingTemplateSportsCarVisual)
+    if (MountedVarietyBody)
+    {
+        // Tint the pack's authored materials where they expose a colour parameter,
+        // and otherwise leave them alone. Overwriting all slots with the flat
+        // traffic colour would throw away the paint, glass and interior that are
+        // the entire reason for using these bodies; the replicated colour still
+        // drives near-miss and score logic regardless of what is rendered.
+        ApplyTintedAuthoredMaterials(TrafficColor);
+        for (UStaticMeshComponent* Wheel : { FrontLeftWheel, FrontRightWheel, RearLeftWheel, RearRightWheel })
+        {
+            Wheel->SetMaterial(0, TireMaterial);
+        }
+        UpdateVarietyPackVisualGeometry();
+    }
+    else if (bUsingTemplateSportsCarVisual)
     {
         if (!ApplyTintedAuthoredMaterials(TrafficColor))
         {
@@ -436,6 +465,98 @@ void ATrafficVehicleBase::ApplyTrafficVisualState()
     }
 }
 
+UStaticMesh* ATrafficVehicleBase::SelectVarietyPackBodyForVariant() const
+{
+    // Deliberately keyed off the REPLICATED profile name, like every other visual
+    // choice here, so each client mounts the identical body without inferring it
+    // from local state.
+    //
+    // The pack ships no coupe, so that profile takes the pickup. Five profiles
+    // mapping to five DISTINCT bodies is worth more here than a literal name match:
+    // the point of this change is that traffic stops being one car repeated, and a
+    // pickup at 115 km/h is ordinary motorway traffic anyway.
+    const FName Variant = ReplicatedTrafficVariantName;
+    if (Variant == TEXT("Commuter")) { return VarietyHatchbackMesh; }
+    if (Variant == TEXT("Coupe")) { return VarietyPickupMesh; }
+    if (Variant == TEXT("Sport")) { return VarietySportsCarMesh; }
+    if (Variant == TEXT("SUV")) { return VarietySUVMesh; }
+    if (Variant == TEXT("Truck")) { return VarietyBoxTruckMesh; }
+    return nullptr;
+}
+
+void ATrafficVehicleBase::UpdateVarietyPackVisualGeometry()
+{
+    const UStaticMesh* BodyMesh = VehicleMesh->GetStaticMesh();
+    const UStaticMesh* WheelMesh = FrontLeftWheel->GetStaticMesh();
+    if (!BodyMesh)
+    {
+        return;
+    }
+
+    const FVector CollisionExtent = ReplicatedCollisionExtent;
+
+    // Fit to the collision box the director already sized per profile, so the
+    // silhouette changes and the physics does not. Slightly larger than the box:
+    // a body that exactly matches its collider looks undersized next to one that
+    // overhangs it, and the near-miss trigger is much larger than either.
+    const FVector DesiredBodySize(
+        CollisionExtent.X * 2.05f,
+        CollisionExtent.Y * 2.05f,
+        CollisionExtent.Z * 2.0f);
+
+    const FVector BodyScale = CalculateTrafficMeshScaleForSize(BodyMesh, DesiredBodySize);
+    const FBoxSphereBounds BodyBounds = BodyMesh->GetBounds();
+    const FBoxSphereBounds WheelBounds = WheelMesh ? WheelMesh->GetBounds() : FBoxSphereBounds(EForceInit::ForceInit);
+
+    // Sit the body so its underside rests just inside the bottom of the collider,
+    // and centre it on the collider in X and Y whatever its authored pivot was -
+    // the five pack meshes do not share one.
+    const float BodyMinimumZ = (BodyBounds.Origin.Z - BodyBounds.BoxExtent.Z) * BodyScale.Z;
+    const float BodyRootZ = -CollisionExtent.Z + 1.0f - BodyMinimumZ;
+    const FVector BodyLocation(
+        -(BodyBounds.Origin.X * BodyScale.X),
+        -(BodyBounds.Origin.Y * BodyScale.Y),
+        BodyRootZ);
+
+    VehicleMesh->SetRelativeScale3D(BodyScale);
+    VehicleMesh->SetRelativeLocation(BodyLocation);
+
+    // The pack bodies carry their own glass as a material slot, so the separate
+    // cabin and light-bar props would just intersect them.
+    CabinMesh->SetVisibility(false);
+    FrontLightBar->SetVisibility(false);
+    RearLightBar->SetVisibility(false);
+
+    if (!WheelMesh)
+    {
+        return;
+    }
+
+    // Wheels derived from the FITTED body's footprint rather than authored pivots.
+    // Wheelbase at 62% of length and track just inside the flanks puts them in the
+    // arches on all five bodies without five hand-tuned tables - which is exactly
+    // the tuning debt that left the Offroad import switched off.
+    const float FittedHalfLength = BodyBounds.BoxExtent.X * BodyScale.X;
+    const float FittedHalfWidth = BodyBounds.BoxExtent.Y * BodyScale.Y;
+    const float WheelRadius = FMath::Max(1.0f, WheelBounds.BoxExtent.Z);
+    const float WheelScale = FMath::Clamp((CollisionExtent.Z * 0.62f) / WheelRadius, 0.05f, 4.0f);
+
+    const float AxleX = FittedHalfLength * 0.62f;
+    const float AxleY = FMath::Max(10.0f, FittedHalfWidth - (WheelBounds.BoxExtent.Y * WheelScale * 0.5f));
+    const float AxleZ = -CollisionExtent.Z + (WheelRadius * WheelScale);
+
+    for (const TPair<UStaticMeshComponent*, FVector>& Wheel : {
+             TPair<UStaticMeshComponent*, FVector>(FrontLeftWheel, FVector(AxleX, -AxleY, AxleZ)),
+             TPair<UStaticMeshComponent*, FVector>(FrontRightWheel, FVector(AxleX, AxleY, AxleZ)),
+             TPair<UStaticMeshComponent*, FVector>(RearLeftWheel, FVector(-AxleX, -AxleY, AxleZ)),
+             TPair<UStaticMeshComponent*, FVector>(RearRightWheel, FVector(-AxleX, AxleY, AxleZ)) })
+    {
+        Wheel.Key->SetRelativeScale3D(FVector(WheelScale));
+        Wheel.Key->SetRelativeLocation(Wheel.Value);
+        Wheel.Key->SetVisibility(true);
+    }
+}
+
 void ATrafficVehicleBase::ConfigureTrafficVisualAssetForVariant()
 {
     // Do not infer a visual from local state: the server replicates the
@@ -444,6 +565,34 @@ void ATrafficVehicleBase::ConfigureTrafficVisualAssetForVariant()
     // dedicated truck asset.  The imported Offroad asset has incompatible
     // wheel pivots, so SUVs intentionally use the proven SportsCar assembly
     // until that source mesh receives a dedicated fit.
+    // The pack wins whenever it has a body for this profile. It is checked first
+    // because it covers all five profiles, including Truck, which had no dedicated
+    // asset at all and stayed a stylised box.
+    if (UStaticMesh* VarietyBody = SelectVarietyPackBodyForVariant())
+    {
+        if (MountedVarietyBody != VarietyBody)
+        {
+            VehicleMesh->EmptyOverrideMaterials();
+            VehicleMesh->SetStaticMesh(VarietyBody);
+            MountedVarietyBody = VarietyBody;
+
+            for (UStaticMeshComponent* Wheel : { FrontLeftWheel, FrontRightWheel, RearLeftWheel, RearRightWheel })
+            {
+                Wheel->EmptyOverrideMaterials();
+                if (TemplateSportsCarWheelMesh)
+                {
+                    Wheel->SetStaticMesh(TemplateSportsCarWheelMesh);
+                }
+            }
+        }
+
+        bUsingTemplateSportsCarVisual = false;
+        bUsingTemplateOffroadVisual = false;
+        return;
+    }
+
+    MountedVarietyBody = nullptr;
+
     const bool bShouldUseTemplateOffroad = false;
     const bool bShouldUseTemplateSportsCar = bUsesTemplateSportsCar
         && (ReplicatedTrafficVariantName == TEXT("Commuter")

@@ -27,3 +27,10 @@ Thumbs.db
 Config/DefaultEngine.local.ini
 Config/SteamDevAppId.txt
 steam_appid.txt
+
+# Fab / Marketplace packs are re-downloadable from the Fab library and must NOT
+# go into Git LFS: Vehicle Variety Pack alone is 1.4 GB against a 1 GB free quota,
+# and the code degrades gracefully without it (the FObjectFinders return null and
+# every profile falls back to the previous SportsCar assembly). See ENVIRONMENT.md
+# for how to re-fetch it.
+/Content/VehicleVarietyPack/

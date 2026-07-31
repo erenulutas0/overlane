@@ -98,6 +98,22 @@ private:
     void UpdateTemplateSportsCarVisualGeometry();
     void UpdateTemplateOffroadVisualGeometry();
 
+    /**
+     * Fits a Vehicle Variety Pack body and derives wheel placement from its bounds.
+     *
+     * The pack's SM_ meshes are bodies only - their material slots are body,
+     * interior, undercarriage and glass, with no tyre slot, because the wheels live
+     * in a skeletal rig this project cannot use (movement here is kinematic, not
+     * Chaos). So the body comes from the pack and the wheels stay ours, placed from
+     * the fitted body's own bounds rather than from authored pivots: five different
+     * bodies would otherwise each need a hand-tuned set, which is what left the
+     * Offroad import disabled.
+     */
+    void UpdateVarietyPackVisualGeometry();
+
+    /** The pack body matching the replicated profile name, or null if unavailable. */
+    UStaticMesh* SelectVarietyPackBodyForVariant() const;
+
     UPROPERTY(VisibleAnywhere, Category = "Traffic")
     TObjectPtr<UBoxComponent> Collision;
 
@@ -154,6 +170,30 @@ private:
 
     UPROPERTY(Transient)
     TObjectPtr<UStaticMesh> TemplateSportsCarWheelMesh;
+
+    /**
+     * Vehicle Variety Pack bodies, one per traffic profile.
+     *
+     * Before these, every profile except Truck shared the one SportsCar assembly -
+     * Commuter, Coupe, Sport and SUV were literally the same car in different
+     * colours, which is most of why 42 cars of traffic read as repetitive. These
+     * give each profile its own silhouette, which is the cue the eye actually uses
+     * at speed.
+     */
+    UPROPERTY(Transient)
+    TObjectPtr<UStaticMesh> VarietyHatchbackMesh;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UStaticMesh> VarietyPickupMesh;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UStaticMesh> VarietySportsCarMesh;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UStaticMesh> VarietySUVMesh;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UStaticMesh> VarietyBoxTruckMesh;
 
     // The off-road template is intentionally a separate traffic profile.  The
     // replicated profile name below selects it on every client, rather than
@@ -228,6 +268,10 @@ private:
     bool bUsesTemplateOffroad = false;
     bool bUsingTemplateSportsCarVisual = false;
     bool bUsingTemplateOffroadVisual = false;
+
+    /** Which pack body is currently mounted, so the fit is not redone every frame. */
+    UPROPERTY(Transient)
+    TObjectPtr<UStaticMesh> MountedVarietyBody;
     bool bNearMissEncounterActive = false;
     bool bNearMissBlocked = false;
     bool bNearMissAwarded = false;
