@@ -777,9 +777,25 @@ void AOverlaneBotDriverController::Tick(float DeltaSeconds)
     // the rival could never get anywhere near the 244.8 km/h the human uses, and
     // no deficit was ever recoverable. Clear road and enough speed to be worth
     // boosting are the real conditions.
+    // The old !bBlockedAhead term asked the wrong question, and it - not the charge
+    // budget - is what held the duty cycle at 16% against an economy that permits 30%.
+    //
+    // bBlockedAhead is DesiredSpeed < 0.9 * unboosted cruise, i.e. "is my TARGET
+    // high". The question boost actually answers is "am I BELOW my target". Behind a
+    // 2800 cm/s leader the rival's target might be 4000 while it is doing 3000: boost
+    // would close that deficit sooner, and the old gate forbade it precisely there.
+    // The human boosts INTO traffic and brakes late, which is most of the 241 vs 156
+    // km/h difference; hoarding charge that caps at 1.0 is strictly worse than
+    // spending it.
+    //
+    // Throttle > 0 already encodes "DesiredSpeed exceeds my speed", so the only real
+    // waste case left is accelerating into a car about to force a brake. That is a
+    // question about the GAP, not about the target level, so it is tested as one.
+    const bool bWorthSpending = Gap > (EmergencyGap * 2.0f);
+
     const bool bWantsBoost = bAllowBoost
         && bBoostEngaged
-        && !bBlockedAhead
+        && bWorthSpending
         && !bSpunAround
         && Throttle > KINDA_SMALL_NUMBER
         && BotSpeed >= 900.0f
