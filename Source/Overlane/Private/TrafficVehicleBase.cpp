@@ -542,7 +542,10 @@ void ATrafficVehicleBase::UpdateVarietyPackVisualGeometry()
     const float WheelScale = FMath::Clamp((CollisionExtent.Z * 0.62f) / WheelRadius, 0.05f, 4.0f);
 
     const float AxleX = FittedHalfLength * 0.62f;
-    const float AxleY = FMath::Max(10.0f, FittedHalfWidth - (WheelBounds.BoxExtent.Y * WheelScale * 0.5f));
+    // Inside the flanks, not flush with them: a wheel whose outer face sits level
+    // with the widest point of the body reads as sticking out, because a real one is
+    // recessed into the arch.
+    const float AxleY = FMath::Max(10.0f, (FittedHalfWidth * 0.80f) - (WheelBounds.BoxExtent.Y * WheelScale * 0.5f));
     const float AxleZ = -CollisionExtent.Z + (WheelRadius * WheelScale);
 
     for (const TPair<UStaticMeshComponent*, FVector>& Wheel : {
@@ -551,6 +554,13 @@ void ATrafficVehicleBase::UpdateVarietyPackVisualGeometry()
              TPair<UStaticMeshComponent*, FVector>(RearLeftWheel, FVector(-AxleX, -AxleY, AxleZ)),
              TPair<UStaticMeshComponent*, FVector>(RearRightWheel, FVector(-AxleX, AxleY, AxleZ)) })
     {
+        // Rotation must be RESET, not merely left alone. The stylised path builds
+        // its wheels from an engine Cylinder, which needs a 90 degree roll to stand
+        // up; the template SportsCar wheel is already authored vertical in the X/Z
+        // plane and needs none. Setting only scale and location inherited whichever
+        // roll the component last carried, which is why the wheels came out lying
+        // flat and splayed sideways.
+        Wheel.Key->SetRelativeRotation(FRotator::ZeroRotator);
         Wheel.Key->SetRelativeScale3D(FVector(WheelScale));
         Wheel.Key->SetRelativeLocation(Wheel.Value);
         Wheel.Key->SetVisibility(true);
