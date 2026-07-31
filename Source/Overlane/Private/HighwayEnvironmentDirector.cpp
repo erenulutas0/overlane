@@ -326,8 +326,10 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
     {
         // Sits just below the shoulder so the barrier foot is never left floating,
         // and wide enough to still read at the horizon rather than vanishing.
+        // Wide enough to run from the shoulder out past the guardrail line at 1660,
+        // so the rail stands ON the verge rather than in the middle of the grass.
         Verge.Key->SetRelativeLocation(FVector(RouteLength * 0.5f, Verge.Value, VisualRoadZ - 2.0f));
-        Verge.Key->SetRelativeScale3D(FVector(VisualRouteLength / CubeSize, 6.4f, 0.07f));
+        Verge.Key->SetRelativeScale3D(FVector(VisualRouteLength / CubeSize, 9.0f, 0.07f));
         Verge.Key->SetMaterial(0, VergeMaterial);
     }
 
@@ -411,9 +413,17 @@ void AHighwayEnvironmentDirector::BuildGuardRail()
     // eye nothing to clock against.
     constexpr float PostSpacing = 400.0f;
     constexpr float BeamTopZ = 70.0f;
-    constexpr float BeamHeight = 31.0f;
+    constexpr float BeamHeight = 26.0f;
     constexpr float BeamCentreZ = BeamTopZ - (BeamHeight * 0.5f);
-    constexpr float RailY = 1180.0f;
+
+    // Out onto the verge, clear of the concrete wall at Y = 1010.
+    //
+    // At 1180 the rail sat 170 cm from the wall, so the shoulder, the wall and the
+    // rail all crowded into about five metres and the eye merged them into one thick
+    // slab - which is exactly what the barriers looked like. Separated, the wall
+    // reads as the wall and the rail reads as a roadside element, and the gap
+    // between them gives the verge somewhere to show.
+    constexpr float RailY = 1660.0f;
 
     // A visible seam between segments, which is what a real bolted run looks like.
     constexpr float BeamGap = 12.0f;
@@ -429,7 +439,7 @@ void AHighwayEnvironmentDirector::BuildGuardRail()
             GuardRailPosts->AddInstance(FTransform(
                 FRotator::ZeroRotator,
                 FVector(X, Y, BeamTopZ * 0.5f),
-                FVector(0.14f, 0.14f, BeamTopZ / CubeSize)));
+                FVector(0.11f, 0.11f, BeamTopZ / CubeSize)));
 
             // Beam spanning to the next post, offset road-side of the post as real
             // W-beam is, so the posts read as being BEHIND the rail rather than
@@ -440,7 +450,7 @@ void AHighwayEnvironmentDirector::BuildGuardRail()
                 GuardRailBeams->AddInstance(FTransform(
                     FRotator::ZeroRotator,
                     FVector(BeamCentreX, Y - (Side * 9.0f), BeamCentreZ),
-                    FVector(BeamLength / CubeSize, 0.10f, BeamHeight / CubeSize)));
+                    FVector(BeamLength / CubeSize, 0.07f, BeamHeight / CubeSize)));
             }
         }
     }
