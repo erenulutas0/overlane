@@ -70,6 +70,11 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
     LeftShoulder->SetupAttachment(SceneRoot);
     RightShoulder = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RightShoulder"));
     RightShoulder->SetupAttachment(SceneRoot);
+    LeftVerge = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("LeftVerge"));
+    LeftVerge->SetupAttachment(SceneRoot);
+    RightVerge = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("RightVerge"));
+    RightVerge->SetupAttachment(SceneRoot);
+
     GuardRailPosts = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("GuardRailPosts"));
     GuardRailPosts->SetupAttachment(SceneRoot);
     GuardRailBeams = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("GuardRailBeams"));
@@ -149,7 +154,7 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
         RoadSurfaceMaterial = RoadMaterialFinder.Object;
     }
 
-    for (UStaticMeshComponent* Component : { LeftLandscape, RightLandscape, RoadSurface, LeftShoulder, RightShoulder })
+    for (UStaticMeshComponent* Component : { LeftLandscape, RightLandscape, RoadSurface, LeftShoulder, RightShoulder, LeftVerge, RightVerge })
     {
         Component->SetStaticMesh(CubeMesh);
         ConfigureVisualMesh(Component);
@@ -312,6 +317,18 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
         Shoulder.Key->SetRelativeLocation(FVector(RouteLength * 0.5f, Shoulder.Value, VisualRoadZ + 1.0f));
         Shoulder.Key->SetRelativeScale3D(FVector(VisualRouteLength / CubeSize, 1.2f, 0.08f));
         Shoulder.Key->SetMaterial(0, ShoulderMaterial);
+    }
+
+    // Desaturated, slightly warm earth: the point is to sit BETWEEN the concrete and
+    // the grass in both hue and value, so neither boundary is a hard line any more.
+    UMaterialInstanceDynamic* VergeMaterial = CreateSurfaceMaterial(TerrainSurfaceMaterial, FLinearColor(0.105f, 0.092f, 0.070f));
+    for (const TPair<UStaticMeshComponent*, float>& Verge : { TPair<UStaticMeshComponent*, float>(LeftVerge, -1520.0f), TPair<UStaticMeshComponent*, float>(RightVerge, 1520.0f) })
+    {
+        // Sits just below the shoulder so the barrier foot is never left floating,
+        // and wide enough to still read at the horizon rather than vanishing.
+        Verge.Key->SetRelativeLocation(FVector(RouteLength * 0.5f, Verge.Value, VisualRoadZ - 2.0f));
+        Verge.Key->SetRelativeScale3D(FVector(VisualRouteLength / CubeSize, 6.4f, 0.07f));
+        Verge.Key->SetMaterial(0, VergeMaterial);
     }
 
     GuardRailPosts->SetMaterial(0, RailMaterial);

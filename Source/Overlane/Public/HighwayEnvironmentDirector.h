@@ -137,6 +137,22 @@ private:
     TObjectPtr<UStaticMeshComponent> RightShoulder;
 
     /**
+     * Bare-earth verge between the barrier and the grass.
+     *
+     * Without it the concrete meets saturated green on a single hard line running
+     * the whole 6 km, and a hard line between two flat colours is one of the
+     * strongest "untextured prototype" cues there is - the eye reads it as a
+     * material boundary rather than as ground. Real motorways always have a scuffed,
+     * desaturated transition here, and giving it its own strip also breaks up the
+     * enormous uniform green mass either side of the route.
+     */
+    UPROPERTY(VisibleAnywhere, Category = "Highway")
+    TObjectPtr<UStaticMeshComponent> LeftVerge;
+
+    UPROPERTY(VisibleAnywhere, Category = "Highway")
+    TObjectPtr<UStaticMeshComponent> RightVerge;
+
+    /**
      * The guardrail as posts and beam segments rather than one stretched box.
      *
      * It used to be two UStaticMeshComponents scaled to (6300, 0.12, 0.09) - a single
