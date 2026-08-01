@@ -48,6 +48,9 @@ private:
     /** Instances the posts and beam segments that replaced the stretched rail box. */
     void BuildGuardRail();
 
+    /** Bridges crossing above the route at intervals. Never below - the route is flat. */
+    void AddOverpasses();
+
     void AddRoadsideFurniture();
     void AddHeroDistrict();
     void AddHeroServiceAreas();

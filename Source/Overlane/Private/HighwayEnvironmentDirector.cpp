@@ -399,6 +399,7 @@ void AHighwayEnvironmentDirector::BuildVisualRoute()
         HeroShowcaseCar->SetRelativeScale3D(FVector(ConceptCarScale));
     }
     AddInterchangeSetPiece();
+    AddOverpasses();
     AddDistantLandscape();
 }
 
@@ -484,6 +485,62 @@ void AHighwayEnvironmentDirector::BuildGuardRail()
                     FVector(BeamCentreX, Y - (Side * 9.0f), BeamCentreZ),
                     FVector(BeamLength / CubeSize, 0.07f, BeamHeight / CubeSize)));
             }
+        }
+    }
+}
+
+void AHighwayEnvironmentDirector::AddOverpasses()
+{
+    const auto AddCube = [](UInstancedStaticMeshComponent* Component, const FVector& Location, const FVector& Scale)
+    {
+        Component->AddInstance(FTransform(FRotator::ZeroRotator, Location, Scale));
+    };
+
+    // Bridges OVER the route, never under it.
+    //
+    // The pawn traces ground height once in BeginPlay and then only moves
+    // horizontally, so the road itself has to stay dead flat - an underpass would
+    // leave cars floating or buried. Crossing above costs nothing: the road is
+    // untouched and, from the driver's seat, passing beneath a bridge reads the same
+    // either way.
+    //
+    // They also do something a straight 6 km corridor badly needs, beyond looking
+    // like a motorway: they give distance a beat. Without periodic structure there is
+    // nothing to measure progress against, which is a large part of why the route has
+    // felt like a treadmill.
+    constexpr float OverpassSpacing = 115000.0f;
+    constexpr float FirstOverpassX = 78000.0f;
+
+    // Clearance: the tallest traffic profile is the box truck at 210 cm, so 850 cm to
+    // the underside is generous even allowing for the deck's own thickness.
+    constexpr float DeckUndersideZ = 850.0f;
+    constexpr float DeckThickness = 95.0f;
+    constexpr float DeckCentreZ = DeckUndersideZ + (DeckThickness * 0.5f);
+
+    // Piers stand outside the guardrail line at 1660 so nothing can be hit.
+    constexpr float PierY = 2450.0f;
+    constexpr float DeckHalfSpan = 3100.0f;
+    constexpr float DeckHalfWidth = 190.0f;
+
+    for (float X = FirstOverpassX; X < RouteLength - 40000.0f; X += OverpassSpacing)
+    {
+        AddCube(InterchangeDecks,
+            FVector(X, 0.0f, DeckCentreZ),
+            FVector((DeckHalfWidth * 2.0f) / CubeSize, (DeckHalfSpan * 2.0f) / CubeSize, DeckThickness / CubeSize));
+
+        // Parapets, which are what make a deck read as a road rather than a slab.
+        for (const float Side : { -1.0f, 1.0f })
+        {
+            AddCube(InterchangeRails,
+                FVector(X + (Side * (DeckHalfWidth - 12.0f)), 0.0f, DeckCentreZ + 75.0f),
+                FVector(0.22f, (DeckHalfSpan * 2.0f) / CubeSize, 0.55f));
+        }
+
+        for (const float Side : { -1.0f, 1.0f })
+        {
+            AddCube(InterchangeColumns,
+                FVector(X, Side * PierY, DeckUndersideZ * 0.5f),
+                FVector(3.2f, 3.2f, DeckUndersideZ / CubeSize));
         }
     }
 }
