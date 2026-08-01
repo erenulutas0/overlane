@@ -38,9 +38,14 @@ MATERIAL_PATH = "/Game/Environment"
 # across a 6 km route, which matters most on the surfaces that fill the most screen.
 SURFACES = [
     # (asset id, material name, tiling cm, tint, applies to)
-    ("Concrete045", "M_OverlaneConcreteScan", 260.0, (1.00, 1.00, 1.00), "barrier"),
-    ("Ground041", "M_OverlaneVergeScan", 420.0, (0.92, 0.88, 0.82), "verge"),
-    ("Grass003", "M_OverlaneGrassScan", 900.0, (0.78, 0.86, 0.70), "landscape"),
+    # Raised from the first pass. Repeat count is what betrays a tiling scan, and it
+    # falls linearly with tiling size: the grass plane is 20 km across, so 900 cm gave
+    # over two thousand repeats and read as streaks. Larger tiles trade some detail
+    # density for far less periodicity, which is the right trade on surfaces the player
+    # never sees close up - and the macro variation below covers what is left.
+    ("Concrete045", "M_OverlaneConcreteScan", 420.0, (1.00, 1.00, 1.00), "barrier"),
+    ("Ground041", "M_OverlaneVergeScan", 1100.0, (0.92, 0.88, 0.82), "verge"),
+    ("Grass003", "M_OverlaneGrassScan", 2600.0, (0.78, 0.86, 0.70), "landscape"),
 ]
 
 
@@ -93,12 +98,19 @@ def build_material(asset_id, material_name, tiling_cm, tint):
         return None
 
     path = MATERIAL_PATH + "/" + material_name
-    material = unreal.EditorAssetLibrary.load_asset(path)
-    if material:
-        unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
-    else:
-        material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
-            material_name, MATERIAL_PATH, unreal.Material, unreal.MaterialFactoryNew())
+
+    # Recreated from scratch rather than re-authored in place.
+    #
+    # delete_all_material_expressions on an already-loaded material trips
+    # "Assertion failed: !IsRooted()" inside MaterialEditor and takes the whole
+    # commandlet down - which is exactly what the second run of this tool did, after
+    # the first had created the assets. Deleting the asset first sidesteps it, and the
+    # tool is idempotent either way: the level reference is re-applied at the end.
+    if unreal.EditorAssetLibrary.does_asset_exist(path):
+        unreal.EditorAssetLibrary.delete_asset(path)
+
+    material = unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+        material_name, MATERIAL_PATH, unreal.Material, unreal.MaterialFactoryNew())
 
     # One shared tiling scalar so colour, roughness and normal cannot drift apart.
     size = make(material, unreal.MaterialExpressionConstant, -1400, 300)
@@ -135,7 +147,47 @@ def build_material(asset_id, material_name, tiling_cm, tint):
     tinted = make(material, unreal.MaterialExpressionMultiply, -420, -160)
     unreal.MaterialEditingLibrary.connect_material_expressions(colour_node, "XY Texture", tinted, "A")
     unreal.MaterialEditingLibrary.connect_material_expressions(tint_node, "", tinted, "B")
-    unreal.MaterialEditingLibrary.connect_material_property(tinted, "", unreal.MaterialProperty.MP_BASE_COLOR)
+
+    # --- Macro variation, which is what makes a tiling scan survive this scale ------
+    #
+    # The grass plane is 20 km across and the scan is about 2 m, so it repeats over two
+    # thousand times. At that count no texture holds up on its own: the eye stops
+    # reading it as ground and starts reading the repeat itself, which is why the first
+    # pass produced parallel streaks running to the horizon.
+    #
+    # Two octaves of very-low-frequency noise, an order of magnitude larger than the
+    # texture, multiply into the albedo and destroy the periodicity without touching
+    # the surface detail.
+    #
+    # CENTRED ON 1.0, deliberately. Lerping toward the raw albedo instead - which is
+    # what an earlier road material did - darkens the whole surface rather than varying
+    # it, and that mistake crushed the road to near-black once already.
+    macro_pos = make(material, unreal.MaterialExpressionWorldPosition, -1400, 900)
+
+    macro_a = make(material, unreal.MaterialExpressionNoise, -1150, 860)
+    macro_a.set_editor_property("scale", 0.00035)
+    macro_a.set_editor_property("quality", 2)
+    macro_a.set_editor_property("levels", 3)
+    macro_a.set_editor_property("output_min", 0.80)
+    macro_a.set_editor_property("output_max", 1.20)
+    unreal.MaterialEditingLibrary.connect_material_expressions(macro_pos, "", macro_a, "Position")
+
+    macro_b = make(material, unreal.MaterialExpressionNoise, -1150, 1080)
+    macro_b.set_editor_property("scale", 0.0022)
+    macro_b.set_editor_property("quality", 1)
+    macro_b.set_editor_property("levels", 2)
+    macro_b.set_editor_property("output_min", 0.88)
+    macro_b.set_editor_property("output_max", 1.12)
+    unreal.MaterialEditingLibrary.connect_material_expressions(macro_pos, "", macro_b, "Position")
+
+    macro = make(material, unreal.MaterialExpressionMultiply, -900, 960)
+    unreal.MaterialEditingLibrary.connect_material_expressions(macro_a, "", macro, "A")
+    unreal.MaterialEditingLibrary.connect_material_expressions(macro_b, "", macro, "B")
+
+    varied = make(material, unreal.MaterialExpressionMultiply, -220, -120)
+    unreal.MaterialEditingLibrary.connect_material_expressions(tinted, "", varied, "A")
+    unreal.MaterialEditingLibrary.connect_material_expressions(macro, "", varied, "B")
+    unreal.MaterialEditingLibrary.connect_material_property(varied, "", unreal.MaterialProperty.MP_BASE_COLOR)
 
     if rough:
         rough_node = world_aligned(rough, 200)
