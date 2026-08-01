@@ -125,6 +125,53 @@ throwaway project on `E:`, then copy its `Content\<Pack>` folder into
 
 ---
 
+## Where the work stands (2026-08-01)
+
+**Free roam** — `overlane.FreeRoam=1` under `[SystemSettings]` in
+`Config/DefaultEngine.ini`. No countdown, no finish, no rival; traffic and environment
+still run. Use it to inspect the map.
+
+### Next: curved route with gradients
+
+The user wants curves and **gradients** (uphill/downhill) but explicitly **not** bumps.
+That distinction matters technically: both need the pawn to follow ground height
+continuously instead of tracing Z once at `BeginPlay`, but gradients are low-frequency,
+so they do not fight the collision sweep or destabilise PRSA replay the way
+high-frequency bumps would.
+
+Order, and why:
+
+1. **Route centreline spline generator** — curvature as a parametric profile, lanes
+   derived from it. Do NOT hand-drag spline points.
+2. **Shared station parameterisation — the load-bearing step.** Parallel lane splines
+   do not have equal arc length. The difference is exactly `d × Θ` (d = lateral offset,
+   Θ = total heading change) and **the radius cancels**, so gentle curves buy nothing.
+   At 600 cm lane spacing and a 25.8° sweep that is **270 cm**, against a
+   `MergeBufferBehind` of 150 — large enough that the rival would clear a car it is
+   already touching as safe. Lanes must be indexed by a shared route station, not by
+   their own distance.
+3. **Geometry onto the spline** — road, shoulders, guardrail, verge.
+4. **Vertical profile** — this is where the pawn's ground-follow change lands.
+5. **Adapt the rival to curvature** — its pure-pursuit steering has steady-state
+   cross-track lag of `e = L(v/(R·Kp·ω_max) − L/2R)`: 144 cm at R = 1000 m on boost
+   against a `LaneCompleteTolerance` of 120, so **no merge would ever complete**.
+   Minimum radius 2000 m (error 72 cm) plus a curvature feed-forward term that is
+   exactly zero at κ = 0, so the tuned P gain is untouched.
+
+A full 8-agent design pass found 25 blocking defects in an earlier version of this
+plan; the ones above are the survivors that matter. Do not skip step 2.
+
+### Open, unresolved
+
+- **Rival still cannot beat the player.** Boost is no longer the constraint (duty cycle
+  reaches the economy's own 30% ceiling). Cause unknown. **Do not tune it on single
+  unseeded runs** — measured spread on one build is 139–184 km/h, ±14%, which swamps
+  every effect chased so far. Pin `overlane.Bot.Seed` first.
+- **Ground streaks** — diagnosed as grazing-angle undersampling (6.3 km plane viewed
+  down its length), fixed by `r.MaxAnisotropy` 8 → 16 plus stronger mid-field fog, but
+  **not visually verified**. If they persist, cut the length-wise repeat count rather
+  than adding more filtering.
+
 ## Constraints that are permanent
 
 - **No Chaos Vehicles.** Movement is kinematic: one scalar `CurrentSpeed`, then
