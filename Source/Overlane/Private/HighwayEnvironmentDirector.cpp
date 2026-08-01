@@ -167,6 +167,16 @@ AHighwayEnvironmentDirector::AHighwayEnvironmentDirector()
 
     LaneDashes->SetStaticMesh(CubeMesh);
     EdgeReflectors->SetStaticMesh(CubeMesh);
+
+    // Contact shadows off on flat paint and on the horizon, as ART_PLAN.md calls for.
+    // A contact shadow traces a short ray from the receiving pixel: markings lying on
+    // the road have nothing to occlude, and the hills are kilometres away where the
+    // trace resolves nothing. Both spend frame time for an effect nobody can see, and
+    // on the markings it actively works against them by darkening the seam and
+    // reinforcing the raised-strip read the flattening above is meant to remove.
+    LaneDashes->SetCastContactShadow(false);
+    EdgeReflectors->SetCastContactShadow(false);
+    DistantHills->SetCastContactShadow(false);
     LampPoles->SetStaticMesh(CylinderMesh);
     LampArms->SetStaticMesh(CubeMesh);
     LampHeads->SetStaticMesh(SphereMesh);
@@ -388,7 +398,13 @@ void AHighwayEnvironmentDirector::AddLaneMarkings()
     {
         for (float DividerY : DividerOffsets)
         {
-            LaneDashes->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, DividerY, VisualRoadZ + 7.0f), FVector(DashLength / CubeSize, 0.11f, 0.025f)));
+            // Paint, not tape. These were 2.5 cm thick boxes floating 7 cm above the
+            // road: the surface's top face is at VisualRoadZ + 3.5, so their
+            // undersides sat 2.25 cm clear of it. This game is viewed almost entirely
+            // at a grazing angle, and at that angle a raised box catches light on its
+            // side faces and casts its own shadow - it reads as a strip of tape or a
+            // low kerb rather than as markings. 0.8 cm proud, resting ON the surface.
+            LaneDashes->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, DividerY, VisualRoadZ + 3.9f), FVector(DashLength / CubeSize, 0.11f, 0.008f)));
         }
     }
 
@@ -396,8 +412,10 @@ void AHighwayEnvironmentDirector::AddLaneMarkings()
     // on the very long straight prototype road.
     for (float X = 500.0f; X < RouteLength + VisualRouteOverscan; X += 1250.0f)
     {
-        EdgeReflectors->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, -940.0f, VisualRoadZ + 7.0f), FVector(3.2f, 0.13f, 0.03f)));
-        EdgeReflectors->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, 940.0f, VisualRoadZ + 7.0f), FVector(3.2f, 0.13f, 0.03f)));
+        // Same correction as the lane dashes: these are painted edge lines, so they
+        // rest on the surface rather than hovering above it.
+        EdgeReflectors->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, -940.0f, VisualRoadZ + 4.0f), FVector(3.2f, 0.13f, 0.010f)));
+        EdgeReflectors->AddInstance(FTransform(FRotator::ZeroRotator, FVector(X, 940.0f, VisualRoadZ + 4.0f), FVector(3.2f, 0.13f, 0.010f)));
     }
 }
 
