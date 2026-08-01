@@ -41,7 +41,26 @@ namespace
 
     bool IsFreeRoamEnabled()
     {
-        return CVarFreeRoam.GetValueOnAnyThread() != 0;
+        if (CVarFreeRoam.GetValueOnAnyThread() != 0)
+        {
+            return true;
+        }
+
+        // Fall back to reading the ini directly, because the cvar route silently
+        // loses the setting. [SystemSettings] is applied while engine config loads,
+        // but a TAutoConsoleVariable declared in a game module only registers when
+        // that module loads - which is later. The assignment therefore targets a
+        // variable that does not exist yet and is dropped without a warning, which is
+        // exactly why the race kept running after the setting was added.
+        static int32 ConfigValue = -1;
+        if (ConfigValue < 0)
+        {
+            bool bFromConfig = false;
+            ConfigValue = (GConfig && GConfig->GetBool(TEXT("SystemSettings"), TEXT("overlane.FreeRoam"), bFromConfig, GEngineIni) && bFromConfig)
+                ? 1
+                : 0;
+        }
+        return ConfigValue != 0;
     }
 }
 

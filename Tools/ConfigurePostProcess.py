@@ -156,8 +156,17 @@ def configure_volume(volume):
     # Per-object blur is a trap here: traffic recycles by teleport, and a teleport
     # is a one-frame velocity spike that smears that car across the whole screen.
     # Object size culling suppresses it while camera blur is kept.
-    scalar("override_motion_blur_amount", "motion_blur_amount", 0.2)
-    scalar("override_motion_blur_max", "motion_blur_max", 2.0)
+    # Cut hard after measurement, not taste. The radial streaks on the grass were
+    # blamed on tiling, then on filtering, then on the normal map, and three
+    # material passes changed nothing. The evidence that settled it: the streaks
+    # are strong while moving and absent in a screenshot taken at a standstill.
+    # That is camera motion blur smearing ground detail toward the vanishing
+    # point, and no material edit could ever have touched it.
+    #
+    # MotionBlurMax is the cap on blur radius as a percentage of screen width, so
+    # it is the knob that actually bounds the smear; 2.0 at 245 km/h is enormous.
+    scalar("override_motion_blur_amount", "motion_blur_amount", 0.12)
+    scalar("override_motion_blur_max", "motion_blur_max", 0.4)
     scalar("override_motion_blur_target_fps", "motion_blur_target_fps", 60)
     scalar("override_motion_blur_per_object_size", "motion_blur_per_object_size", 2.0)
 
