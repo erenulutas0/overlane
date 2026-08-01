@@ -43,9 +43,19 @@ SURFACES = [
     # over two thousand repeats and read as streaks. Larger tiles trade some detail
     # density for far less periodicity, which is the right trade on surfaces the player
     # never sees close up - and the macro variation below covers what is left.
-    ("Concrete045", "M_OverlaneConcreteScan", 420.0, (1.00, 1.00, 1.00), "barrier"),
-    ("Ground041", "M_OverlaneVergeScan", 1100.0, (0.92, 0.88, 0.82), "verge"),
-    ("Grass003", "M_OverlaneGrassScan", 2600.0, (0.78, 0.86, 0.70), "landscape"),
+    # The trailing flag is whether to use the normal map.
+    #
+    # OFF for the two ground surfaces, deliberately. They are viewed almost edge-on
+    # down a 6.3 km plane, where a normal map contributes no visible relief - the
+    # surface is flat and the light is grazing - but contributes all of the
+    # minification aliasing, because normal maps alias far worse than albedo under
+    # heavy minification. That is the radial streaking, and it is why neither macro
+    # variation nor raising anisotropy touched it: both left the normal map sampling.
+    # The barrier keeps its normal - it is a vertical wall seen face-on, which is
+    # exactly the case a normal map is for.
+    ("Concrete045", "M_OverlaneConcreteScan", 420.0, (1.00, 1.00, 1.00), "barrier", True),
+    ("Ground041", "M_OverlaneVergeScan", 2600.0, (0.92, 0.88, 0.82), "verge", False),
+    ("Grass003", "M_OverlaneGrassScan", 9000.0, (0.78, 0.86, 0.70), "landscape", False),
 ]
 
 
@@ -88,7 +98,7 @@ def make(material, klass, x, y):
     return unreal.MaterialEditingLibrary.create_material_expression(material, klass, x, y)
 
 
-def build_material(asset_id, material_name, tiling_cm, tint):
+def build_material(asset_id, material_name, tiling_cm, tint, use_normal):
     colour = import_texture(asset_id, "Color", False)
     rough = import_texture(asset_id, "Roughness", False)
     normal = import_texture(asset_id, "NormalDX", True)
@@ -195,7 +205,7 @@ def build_material(asset_id, material_name, tiling_cm, tint):
             unreal.MaterialEditingLibrary.connect_material_property(
                 rough_node, "XY Texture", unreal.MaterialProperty.MP_ROUGHNESS)
 
-    if normal:
+    if normal and use_normal:
         normal_node = world_aligned(normal, 600, True)
         if normal_node:
             unreal.MaterialEditingLibrary.connect_material_property(
@@ -231,8 +241,8 @@ def apply_barrier(material):
 
 def run():
     built = {}
-    for asset_id, material_name, tiling, tint, target in SURFACES:
-        material = build_material(asset_id, material_name, tiling, tint)
+    for asset_id, material_name, tiling, tint, target, use_normal in SURFACES:
+        material = build_material(asset_id, material_name, tiling, tint, use_normal)
         if material:
             built[target] = material
 
