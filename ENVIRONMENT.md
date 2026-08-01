@@ -167,7 +167,21 @@ plan; the ones above are the survivors that matter. Do not skip step 2.
   reaches the economy's own 30% ceiling). Cause unknown. **Do not tune it on single
   unseeded runs** — measured spread on one build is 139–184 km/h, ±14%, which swamps
   every effect chased so far. Pin `overlane.Bot.Seed` first.
-- **Ground streaks** — diagnosed as grazing-angle undersampling (6.3 km plane viewed
+- **Ground streaks — four failed fixes, evidence now narrowed.** Ruled OUT: tiling
+  periodicity (macro variation changed nothing), anisotropic filtering (8 -> 16, no
+  change), normal-map aliasing (normals removed from both ground surfaces, no change),
+  and camera motion blur (streaks are present with the debug camera stationary, which
+  kills that hypothesis outright). Ruled IN by the debug-camera screenshots: near-field
+  grass renders correctly and detailed, banding begins with distance, and the band
+  colours are the scan's own dry-grass tones - so the texture is right and the
+  *sampling* is wrong. Best remaining hypothesis, untested: the ground planes are boxes
+  at wildly non-uniform scale (landscape 63 x 200 x 0.06, verge 63 x 9 x 0.07), and
+  WorldAlignedTexture blends its three planar projections by the shading normal - a
+  skewed normal skews the blend and smears the texture along one axis. The barrier,
+  which is a more uniformly scaled actor, does not band nearly as badly. Test it by
+  splitting the ground into uniformly scaled tiles rather than by editing the material
+  again; four material edits have already missed.
+- **Old note** — diagnosed as grazing-angle undersampling (6.3 km plane viewed
   down its length), fixed by `r.MaxAnisotropy` 8 → 16 plus stronger mid-field fog, but
   **not visually verified**. If they persist, cut the length-wise repeat count rather
   than adding more filtering.
