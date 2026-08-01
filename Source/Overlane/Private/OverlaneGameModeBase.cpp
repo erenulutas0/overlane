@@ -12,9 +12,38 @@
 #include "TrafficLanePath.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+
 #include "GameFramework/PlayerState.h"
 #include "GameFramework/GameUserSettings.h"
 #include "Kismet/GameplayStatics.h"
+
+namespace
+{
+    /**
+     * Free roam: keep the traffic and the route, drop the race around them.
+     *
+     * The map is about to be rebuilt with curves and gradients, and inspecting it
+     * while a countdown, a finish line and a rival are all running gets in the way -
+     * you cannot stop and look at a bridge if the race ends 6 km later. It also
+     * sidesteps a real problem for the duration: the curved-road analysis found that
+     * curvature breaks the rival's merge-completion test outright (pure-pursuit
+     * cross-track lag reaches 144 cm against a LaneCompleteTolerance of 120), so with
+     * no rival on the road that defect cannot confuse map work.
+     *
+     * Deliberately a cvar rather than a menu entry. This is a development tool for
+     * looking at the level, not a game mode, and it should not need UI work to exist.
+     */
+    static TAutoConsoleVariable<int32> CVarFreeRoam(
+        TEXT("overlane.FreeRoam"),
+        0,
+        TEXT("1 = no countdown, no finish, no rival. Traffic and the route still run, for inspecting the map."),
+        ECVF_Default);
+
+    bool IsFreeRoamEnabled()
+    {
+        return CVarFreeRoam.GetValueOnAnyThread() != 0;
+    }
+}
 
 AOverlaneGameModeBase::AOverlaneGameModeBase()
 {
@@ -163,7 +192,8 @@ void AOverlaneGameModeBase::Tick(float DeltaSeconds)
         {
             APlayerController* PlayerController = PlayerControllerIt->Get();
             const APawn* RacePawn = PlayerController ? PlayerController->GetPawn() : nullptr;
-            if (RacePawn && RacePawn->GetActorLocation().X >= RouteFinishX)
+            // Free roam has no finish: the route is there to be looked at.
+            if (!IsFreeRoamEnabled() && RacePawn && RacePawn->GetActorLocation().X >= RouteFinishX)
             {
                 WinningPlayer = PlayerController;
                 break;
@@ -326,13 +356,17 @@ void AOverlaneGameModeBase::StartSoloRace()
     bNewPersonalBest = false;
     bPracticeBotWon = false;
     WinningPlayerId = INDEX_NONE;
-    RaceStartTime = World->GetTimeSeconds() + CountdownDuration;
+    // Free roam skips the countdown: there is nothing to count down to.
+    RaceStartTime = World->GetTimeSeconds() + (IsFreeRoamEnabled() ? 0.0f : CountdownDuration);
     if (!LocalTrafficDirector)
     {
         LocalTrafficDirector = World->SpawnActor<ATrafficDirector>();
     }
 
-    SpawnPracticeBotForSoloRace();
+    if (!IsFreeRoamEnabled())
+    {
+        SpawnPracticeBotForSoloRace();
+    }
 
     SyncNetworkRaceState();
 }
