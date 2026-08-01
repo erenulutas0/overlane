@@ -30,14 +30,16 @@ import unreal
 LEVEL_PATH = "/Game/Maps/L_VehicleHandlingTest"
 
 # Low enough to be invisible up close, strong enough to separate the 6 km horizon.
-FOG_DENSITY = 0.012
+FOG_DENSITY = 0.017
 
 # Nearly flat falloff: the route is 6 km long and level, so a fog layer that thins
 # with height would sit above the road rather than along it.
 FOG_HEIGHT_FALLOFF = 0.045
 
-# Nothing within 180 m is touched, so traffic stays crisp exactly where it is read.
-FOG_START_DISTANCE = 18000.0
+# Pulled in from 180 m to 140 m. The grazing-angle streaks live in the mid-field, and
+# fog there costs nothing in readability: traffic the player is reacting to is inside
+# 100 m, so this still never touches a car being read.
+FOG_START_DISTANCE = 14000.0
 
 # Cool and desaturated: the colour distance actually shifts toward on a clear day.
 FOG_COLOUR = (0.42, 0.50, 0.62)
