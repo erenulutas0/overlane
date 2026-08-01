@@ -121,6 +121,23 @@ private:
     UPROPERTY(EditDefaultsOnly, Category = "Highway|Rendering|Surfaces")
     TObjectPtr<UMaterialInterface> TerrainSurfaceMaterial;
 
+    /**
+     * ambientCG photogrammetry scans, world-aligned, built by BuildScannedSurfaces.py.
+     *
+     * Procedural noise was enough for the barrier because concrete really is a
+     * homogeneous material. Ground is not: its variation is blotchy, clustered and
+     * directional, and no noise function reproduces that - which is why the verge and
+     * the grass still read as flat colour blocks after everything else improved.
+     *
+     * Optional on purpose. If the scans are absent these stay null and the flat-tint
+     * path below runs exactly as before, so the project builds without them.
+     */
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> VergeScanMaterial;
+
+    UPROPERTY(Transient)
+    TObjectPtr<UMaterialInterface> GrassScanMaterial;
+
     UPROPERTY(VisibleAnywhere, Category = "Highway")
     TObjectPtr<UStaticMeshComponent> LeftLandscape;
 

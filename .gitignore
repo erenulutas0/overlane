@@ -34,3 +34,8 @@ steam_appid.txt
 # every profile falls back to the previous SportsCar assembly). See ENVIRONMENT.md
 # for how to re-fetch it.
 /Content/VehicleVarietyPack/
+
+# ambientCG source JPGs. The imported .uassets in Content/Environment/Textures are
+# what the game uses; the 195 MB of loose source images are only needed to re-import,
+# and would otherwise go through Git LFS for no benefit.
+/Content/Environment/Source/
